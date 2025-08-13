@@ -11,4 +11,3 @@ Developed By @Zexshia and @rianixia on telegram
 # Credits
 - @Kombat
 - @Kaminarich
-For help

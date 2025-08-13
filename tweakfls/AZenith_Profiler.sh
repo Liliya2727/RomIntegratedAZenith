@@ -419,11 +419,6 @@ balanced_profile() {
         zeshia 1 "$pl/charger_enable"
     done
 
-    # Disable DND
-    if [ "$(cat /data/adb/.config/AZenith/dnd)" -eq 1 ]; then
-        cmd notification set_dnd off && AZLog "DND disabled" || AZLog "Failed to disable DND"
-    fi
-
     # Restore CPU Scaling Governor
     setgov "$default_cpu_gov"
 
@@ -514,9 +509,7 @@ balanced_profile() {
         zeshia TTWU_QUEUE /sys/kernel/debug/sched_features
     fi
 
-    mediatek_balance
-
-    case "$(cat /data/adb/.config/AZenith/soctype)" in
+    case "$(cat /sdcard/config/soctype)" in
     1) mediatek_balance ;;
     2) snapdragon_balance ;;
     3) exynos_balance ;;
@@ -766,13 +759,6 @@ performance_profile() {
         zeshia 1 "$pl/charger_enable"
     done
 
-    # Set DND Mode
-    if [ "$(cat /data/adb/.config/AZenith/dnd)" -eq 1 ]; then
-        cmd notification set_dnd priority && AZLog "DND enabled" || AZLog "Failed to enable DND"
-    else
-        AZLog "DND not enabled."
-    fi
-
     # Set Governor Game
     setgov "performance"
 
@@ -915,9 +901,7 @@ performance_profile() {
         bypassCharge 1
     fi
 
-    mediatek_performance
-
-    case "$(cat /data/adb/.config/AZenith/soctype)" in
+    case "$(cat /sdcard/config/soctype)" in
     1) mediatek_performance ;;
     2) snapdragon_performance ;;
     3) exynos_performance ;;
@@ -1154,18 +1138,14 @@ eco_mode() {
         zeshia NO_NEXT_BUDDY /sys/kernel/debug/sched_features
         zeshia NO_TTWU_QUEUE /sys/kernel/debug/sched_features
     fi
-    
-    mediatek_powersave
 
-    case "$(cat /data/adb/.config/AZenith/soctype)" in
+    case "$(cat /sdcard/config/soctype)" in
     1) mediatek_powersave ;;
     2) snapdragon_powersave ;;
     3) exynos_powersave ;;
     4) unisoc_powersave ;;
     5) tensor_powersave ;;
     esac
-
-    AZLog "ECO Mode applied successfully!"
 
 }
 
@@ -1199,6 +1179,37 @@ initialize() {
     chmod 644 "$CPU/scaling_governor"
     default_gov=$(cat "$CPU/scaling_governor")
     echo "$default_gov" > "$DEFAULT_GOV_FILE"
+
+# Apply Tweaks Based on Chipset
+chipset=$(grep -i 'hardware' /proc/cpuinfo | uniq | cut -d ':' -f2 | sed 's/^[ \t]*//')
+[ -z "$chipset" ] && chipset="$(getprop ro.board.platform) $(getprop ro.hardware)"
+
+case "$(echo "$chipset" | tr '[:upper:]' '[:lower:]')" in
+*mt* | *MT*)
+    soc="MediaTek"
+    echo 1 "/sdcard/config/soctype"
+    ;;
+*sm* | *qcom* | *SM* | *QCOM* | *Qualcomm* | *sdm* | *snapdragon*)
+    soc="Snapdragon"
+    echo 2 "/sdcard/config/soctype"
+    ;;
+*exynos* | *Exynos* | *EXYNOS* | *universal* | *samsung* | *erd* | *s5e*)
+    soc="Exynos"
+    echo 3 "/sdcard/config/soctype"
+    ;;
+*Unisoc* | *unisoc* | *ums*)
+    soc="Unisoc"
+    echo 4 "/sdcard/config/soctype"
+    ;;
+*gs* | *Tensor* | *tensor*)
+    soc="Tensor"
+    echo 5 "/sdcard/config/soctype"
+    ;;
+*)
+    soc="Unknown"
+    echo 0 "/sdcard/config/soctype"
+    ;;
+esac
 
     sync
 }
