@@ -16,6 +16,7 @@ on:
       - "modules/**"
       - "init.azenith.rc"
       - "vendor_sepolicy.cill"
+      - "version"
 
 # Allow only one concurrent build workflows
 concurrency:

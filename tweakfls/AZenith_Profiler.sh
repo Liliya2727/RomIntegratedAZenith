@@ -19,7 +19,7 @@
 # shellcheck disable=SC2013
 
 MODDIR=${0%/*}
-DEFAULT_GOV_FILE="sdcard/config/AZenithDefaultGov"
+DEFAULT_GOV_FILE="/sdcard/config/AZenithDefaultGov"
 
 zeshia() {
     local value="$1"
@@ -1192,13 +1192,13 @@ initialize() {
     zeshia 0 /proc/sys/vm/compaction_proactiveness
 
     zeshia 255 /proc/sys/kernel/sched_lib_mask_force
-    
-    mkdir /sdcard/config/
+
+    mkdir -p /sdcard/config/
     touch /sdcard/config/AZenithDefaultGov
     CPU="/sys/devices/system/cpu/cpu0/cpufreq"
     chmod 644 "$CPU/scaling_governor"
     default_gov=$(cat "$CPU/scaling_governor")
-    echo "$default_gov" >$DEFAULT_GOV_FILE
+    echo "$default_gov" > "$DEFAULT_GOV_FILE"
 
     sync
 }
