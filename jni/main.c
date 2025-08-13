@@ -89,8 +89,7 @@ int main(int argc, char* argv[]) {
 
     log_zenith(LOG_INFO, "Daemon started as PID %d", getpid());
     run_profiler(PERFCOMMON); // exec perfcommon
-    static bool did_notify_start = false;
-
+    
     while (1) {
         sleep(LOOP_INTERVAL);
 

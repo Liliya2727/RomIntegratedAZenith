@@ -72,8 +72,6 @@ extern pid_t game_pid;
 static bool preload_active = false;
 void sighandler(const int signal);
 char* trim_newline(char* string);
-void notify(const char* message);
-void toast(const char* message);
 char* timern(void);
 bool return_true(void);
 bool return_false(void);
@@ -90,7 +88,6 @@ int write2file(const char* filename, const bool append, const bool use_flock, co
 // system
 void log_preload(LogLevel level, const char* message, ...);
 void log_zenith(LogLevel level, const char* message, ...);
-void external_log(LogLevel level, const char* tag, const char* message);
 
 // Utilities
 void set_priority(const pid_t pid);
