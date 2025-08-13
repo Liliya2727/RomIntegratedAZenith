@@ -109,45 +109,6 @@ char* timern(void) {
 }
 
 /***********************************************************************************
- * Function Name      : toast
- * Inputs             : message (const char *) - Message to display
- * Returns            : None
- * Description        : Display a toast notification using bellavita.toast app.
- ***********************************************************************************/
-void toast(const char* message) {
-    int exit = systemv("su -lp 2000 -c \"/system/bin/am start -a android.intent.action.MAIN "
-                       "-e toasttext '%s' -n bellavita.toast/.MainActivity >/dev/null 2>&1\"",
-                       message);
-
-    if (exit != 0) [[clang::unlikely]] {
-        log_zenith(LOG_WARN, "Unable to show toast message: %s", message);
-    }
-}
-
-/***********************************************************************************
- * Function Name      : is_kanged
- * Inputs             : None
- * Returns            : None
- * Description        : Checks if the module renamed/modified by 3rd party.
- ***********************************************************************************/
-void is_kanged(void) {
-    if (systemv("grep -q '^name=AZenith火$' %s", MODULE_PROP) != 0) [[clang::unlikely]] {
-        goto doorprize;
-    }
-
-    if (systemv("grep -q '^author=@Zexshia X @kanaochar$' %s", MODULE_PROP) != 0) [[clang::unlikely]] {
-        goto doorprize;
-    }
-
-    return;
-
-doorprize:
-    log_zenith(LOG_FATAL, "Module modified by 3rd party, exiting.");
-    notify("Trying to rename me?");
-    exit(EXIT_FAILURE);
-}
-
-/***********************************************************************************
  * Function Name      : return_true
  * Inputs             : None
  * Returns            : bool - only true
@@ -167,22 +128,4 @@ bool return_true(void) {
  ***********************************************************************************/
 bool return_false(void) {
     return false;
-}
-
-/***********************************************************************************
- * Function Name      : cleanup
- * Inputs             : None
- * Returns            : None (exits the program)
- * Description        : Terminates vmt processes and exits cleanly with logging.
- ***********************************************************************************/
-void cleanup_vmt(void) {
-    log_zenith(LOG_INFO, "Cleaning up vmt Process...");
-    systemv("pkill -x vmt");
-    systemv("pkill -x vmt2");
-}
-
-void cleanup(void) {
-    log_zenith(LOG_INFO, "Stop Preloading, Killing vmt process...");
-    systemv("pkill -x vmt");
-    systemv("pkill -x vmt2");
 }

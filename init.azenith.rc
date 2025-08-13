@@ -1,0 +1,13 @@
+
+service AZenith /vendor/bin/hw/vendor.azenith-service
+    seclabel u:r:init:s0
+    class late_start
+    user system
+    group system
+    capabilities BLOCK_SUSPEND DAC_OVERRIDE
+    oneshot
+    disabled
+
+on post-fs-data
+    setprop debug.laya.battmon_enabled 1
+    start AZenith

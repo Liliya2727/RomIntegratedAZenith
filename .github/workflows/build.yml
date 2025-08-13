@@ -10,14 +10,11 @@ on:
       - main
     paths:
       - ".github/workflows/build.yml"
-      - ".github/scripts/**"
+      - '.github/scripts/**'
       - "jni/**"
       - "tweakfls/**"
-      - "mainfiles/**"
-      - "preloadbin/**"
-      - "webui/**"
-      - "gamelist.txt"
-      - "version"
+      - "modules/**"
+      - "init.azenith.rc"
 
 # Allow only one concurrent build workflows
 concurrency:
@@ -39,18 +36,8 @@ jobs:
         with:
           ndk-version: r28b
 
-      - name: Setup Bun
-        uses: oven-sh/setup-bun@v2.0.2
-
       - name: Build AZenith JNI
         run: ndk-build
-
-      - name: Building WebRoots
-        working-directory: ./webui
-        run: |
-          bun install
-          bun run build
-          cp -r ./dist/* ../mainfiles/webroot
 
       - name: Compile Flashable Zip
         id: compileZip

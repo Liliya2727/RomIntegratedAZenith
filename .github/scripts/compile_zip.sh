@@ -11,50 +11,27 @@ cd "$GITHUB_WORKSPACE" || {
 	exit 1
 }
 
-# Put critical files and folders here
-need_integrity=(
-	"mainfiles/system/bin"
-	"mainfiles/libs"
-	"mainfiles/META-INF"
-	"mainfiles/service.sh"
-	"mainfiles/uninstall.sh"
-	"mainfiles/module.prop"
-    "mainfiles/AZenith_icon.png"
-	"mainfiles/gamelist.txt"
-    "mainfiles/toast.apk"
-)
-
 # Version info
 version="$(cat version)"
 version_code="$(git rev-list HEAD --count)"
 release_code="$(git rev-parse --short HEAD)-Release"
-sed -i "s/version=.*/version=$version ($release_code)/" mainfiles/module.prop
-sed -i "s/versionCode=.*/versionCode=$version_code/" mainfiles/module.prop
-
-# Compile Gamelist
-paste -sd '|' - <"$GITHUB_WORKSPACE/gamelist.txt" >"$GITHUB_WORKSPACE/mainfiles/gamelist.txt"
 
 # Copy module files
-cp -r ./libs mainfiles
-cp -r ./tweakfls/* mainfiles/system/bin
-cp -r ./preloadbin/* mainfiles/system/bin
-cp LICENSE ./mainfiles
+cp -r ./libs modules/hw
+cp -r ./init.azenith.rc modules/init
+cp -r ./tweakfls/* modules/hw
+cp LICENSE ./modules
 
 # Remove .sh extension from scripts
-find mainfiles/system/bin -maxdepth 1 -type f -name "*.sh" -exec sh -c 'mv -- "$0" "${0%.sh}"' {} \;
+find modules/hw -maxdepth 1 -type f -name "*.sh" -exec sh -c 'mv -- "$0" "${0%.sh}"' {} \;
 
 # Parse version info to module prop
-zipName="AZenith-Tweaks-$version-$release_code"
+zipName="AZenith-$version-$release_code"
 echo "zipName=$zipName" >>"$GITHUB_OUTPUT"
 
-# Generate sha256sum for integrity checkup
-for file in "${need_integrity[@]}"; do
-	bash .github/scripts/generatesha256.sh "$file"
-done
-
 # Zip the file
-cd ./mainfiles || {
-	echo "Unable to cd to ./mainfiles" >&2
+cd ./modules || {
+	echo "Unable to cd to ./modules" >&2
 	exit 1
 }
 

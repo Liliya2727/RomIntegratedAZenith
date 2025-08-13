@@ -11,20 +11,6 @@
 #include <sys/wait.h>
 #include <time.h>
 #include <unistd.h>
-#define GAME_LIB                                                                                                                    \
-    "libunity\\.so|libUE4\\.so|libframeestimation(VK|GL)\\.so|libflutter\\.so|libapp\\.so|libGGP\\.so|libGame\\.so|"                \
-    "libvirglrenderer\\.so|libvortekrenderer\\.so|libwinlator\\.so|libminecraftpe\\.so|libc\\+\\+_shared\\.so|libnative-mvd-"       \
-    "render\\.so|libMiHoYoMTRSDK\\.so|libil2cpp\\.so|libmoba\\.so|libResources\\.so|libyuanshen\\.so|libcri_(vip|ware)_unity\\.so|" \
-    "libgamemaster\\.so|LibPixUI_PXplugin\\.so|LibVkLayer_swapchain_rotate\\.so|libzstd\\.so|libPixUI_Unity\\.so"
-
-#define BASEDIR "/data/adb/modules/AZenith"
-#define INTDIR "/data/adb/.config/AZenith"
-#define MSC BASEDIR
-#define SEARCH_PATHS "/vendor/lib64/egl /vendor/lib64/hw"
-#define PROCESSED_FILE_LIST INTDIR "/processed_files.txt"
-#define PRELOAD_ENABLED INTDIR "/APreload"
-#define LOGGER INTDIR "/logger"
-#define APPRIOR INTDIR "/iosched"
 
 extern unsigned int LOOP_INTERVAL;
 #define MAX_DATA_LENGTH 1024
@@ -36,13 +22,9 @@ extern unsigned int LOOP_INTERVAL;
 #define LOG_TAG "AZenith"
 
 #define LOCK_FILE "/data/adb/.config/AZenith/.lock"
-#define LOG_FILE "/data/adb/.config/AZenith/AZenith.log"
-#define LOG_FILE_PRELOAD "/data/adb/.config/AZenith/AZenithPR.log"
 #define PROFILE_MODE "/data/adb/.config/AZenith/current_profile"
 #define GAME_INFO "/data/adb/.config/AZenith/gameinfo"
-#define GAMELIST "/data/adb/.config/AZenith/gamelist.txt"
-#define MODULE_PROP "/data/adb/modules/AZenith/module.prop"
-#define MODULE_UPDATE "/data/adb/modules/AZenith/update"
+#define GAMELIST "/sdcard/package.txt"
 
 #define MY_PATH                                                                                                                    \
     "PATH=/system/bin:/system/xbin:/data/adb/ap/bin:/data/adb/ksu/bin:/data/adb/magisk:/debug_ramdisk:/sbin:/sbin/su:/su/bin:/su/" \
@@ -87,17 +69,11 @@ extern pid_t game_pid;
  * are in the wrong place.
  */
 
-// Misc Utilities
-extern void GamePreload(const char* package);
-extern void cleanup_vmt(void); // from misc.c
-extern void cleanup(void);
-
 static bool preload_active = false;
 void sighandler(const int signal);
 char* trim_newline(char* string);
 void notify(const char* message);
 void toast(const char* message);
-void is_kanged(void);
 char* timern(void);
 bool return_true(void);
 bool return_false(void);

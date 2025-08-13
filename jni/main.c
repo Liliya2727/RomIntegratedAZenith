@@ -19,60 +19,6 @@
 
 unsigned int LOOP_INTERVAL = 15;
 
-void start_preload_if_needed(const char* pkg, unsigned int* LOOP_INTERVAL) {
-    if (!pkg)
-        return;
-
-    FILE* fp = fopen(PRELOAD_ENABLED, "r");
-    if (fp) {
-        char val = fgetc(fp);
-        fclose(fp);
-
-        if (val == '1') {
-
-            // Fork the preload task to run in a separate process
-            pid_t pid = fork();
-            if (pid == 0) {
-                // In the child process
-                GamePreload(pkg); // Run the preload logic in the background
-                _exit(0);         // Ensure the child exits cleanly without affecting the parent
-            } else if (pid > 0) {
-                // In the parent process
-                *LOOP_INTERVAL = 35; // Increase the loop interval for performance profile
-                preload_active = true;
-            } else {
-                // Fork failed
-                log_zenith(LOG_ERROR, "Failed to fork process for GamePreload");
-            }
-        } else {
-            *LOOP_INTERVAL = 15; // Reset the loop interval if preload is disabled
-            preload_active = false;
-        }
-    }
-}
-
-void stop_preload_if_active(unsigned int* LOOP_INTERVAL) {
-    if (preload_active) {
-        cleanup();
-        preload_active = false;
-        *LOOP_INTERVAL = 15; // reset
-    }
-}
-
-void startpr(const char* pkg) {
-    if (!pkg)
-        return;
-
-    FILE* fp = fopen(PRELOAD_ENABLED, "r");
-    if (fp) {
-        char val = fgetc(fp);
-        fclose(fp);
-
-        if (val == '1') {
-            log_zenith(LOG_INFO, "Start Preloading game package %s", pkg);
-        }
-    }
-}
 
 char* gamestart = NULL;
 pid_t game_pid = 0;
@@ -125,8 +71,6 @@ int main(int argc, char* argv[]) {
         exit(EXIT_FAILURE);
     }
 
-    // Handle case when module modified by 3rd party
-    is_kanged();
 
     // Daemonize service
     if (daemon(0, 0)) {
@@ -148,18 +92,9 @@ int main(int argc, char* argv[]) {
     run_profiler(PERFCOMMON); // exec perfcommon
     static bool did_notify_start = false;
 
-    // Cleanup VMT before initiate it Again
-    cleanup_vmt(); // kill any leftover preload processes
-
     while (1) {
         sleep(LOOP_INTERVAL);
 
-        // Handle case when module gets updated
-        if (access(MODULE_UPDATE, F_OK) == 0) [[clang::unlikely]] {
-            log_zenith(LOG_INFO, "Module update detected, exiting.");
-            notify("Please reboot your device to complete module update.");
-            break;
-        }
 
         // Only fetch gamestart when user not in-game
         // prevent overhead from dumpsys commands.
@@ -167,7 +102,6 @@ int main(int argc, char* argv[]) {
             gamestart = get_gamestart();
         } else if (game_pid != 0 && kill(game_pid, 0) == -1) [[clang::unlikely]] {
             log_zenith(LOG_INFO, "Game %s exited, resetting profile...", gamestart);
-            stop_preload_if_active(&LOOP_INTERVAL);
             game_pid = 0;
             free(gamestart);
             gamestart = get_gamestart();
@@ -181,7 +115,6 @@ int main(int argc, char* argv[]) {
 
         if (gamestart && get_screenstate() && mlbb_is_running != MLBB_RUN_BG) {
             // Bail out if we already on performance profile
-            start_preload_if_needed(gamestart, &LOOP_INTERVAL);
             if (!need_profile_checkup && cur_mode == PERFORMANCE_PROFILE)
                 continue;
 
@@ -198,10 +131,8 @@ int main(int argc, char* argv[]) {
             cur_mode = PERFORMANCE_PROFILE;
             need_profile_checkup = false;
             log_zenith(LOG_INFO, "Applying performance profile for %s", gamestart);
-            toast("Applying Performance Profile");
             run_profiler(PERFORMANCE_PROFILE);
             set_priority(game_pid);
-            startpr(gamestart);
         } else if (get_low_power_state()) {
             // Bail out if we already on powersave profile
             if (cur_mode == ECO_MODE)
@@ -210,7 +141,6 @@ int main(int argc, char* argv[]) {
             cur_mode = ECO_MODE;
             need_profile_checkup = false;
             log_zenith(LOG_INFO, "Applying ECO Mode");
-            toast("Applying Eco Mode");
             run_profiler(ECO_MODE);
         } else {
             // Bail out if we already on normal profile
@@ -220,7 +150,6 @@ int main(int argc, char* argv[]) {
             cur_mode = BALANCED_PROFILE;
             need_profile_checkup = false;
             log_zenith(LOG_INFO, "Applying Balanced profile");
-            toast("Applying Balanced profile");
             if (!did_notify_start) {
                 notify("AZenith is running successfully");
                 did_notify_start = true;
