@@ -30,7 +30,6 @@ const char* level_str[] = {"D", "I", "W", "E", "F"};
  *                      to a log file.
  ***********************************************************************************/
 void log_zenith(LogLevel level, const char* message, ...) {
-    char* timestamp = timern();
     char logMesg[MAX_OUTPUT_LENGTH];
     va_list args;
     va_start(args, message);
