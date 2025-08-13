@@ -1201,7 +1201,7 @@ initialize() {
     echo "$default_gov" >$DEFAULT_GOV_FILE
 
     sync
-
+}
 
 ###############################################
 
