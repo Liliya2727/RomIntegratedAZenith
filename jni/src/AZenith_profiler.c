@@ -29,7 +29,6 @@ bool (*get_low_power_state)(void) = get_low_power_state_normal;
  * Description        : Switch to specified performance profile.
  ***********************************************************************************/
 void run_profiler(const int profile) {
-    is_kanged();
 
     if (profile == 1) {
         write2file(GAME_INFO, false, false, "%s %d %d\n", gamestart, game_pid, uidof(game_pid));

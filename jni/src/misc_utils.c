@@ -35,25 +35,6 @@
 }
 
 /***********************************************************************************
- * Function Name      : notify
- * Inputs             : message (char *) - Message to display
- * Returns            : None
- * Description        : Push a notification.
- ***********************************************************************************/
-void notify(const char* message) {
-    int exit = systemv("su -lp 2000 -c \"/system/bin/cmd notification post "
-                       "-t '%s' "
-                       "-i file:///data/local/tmp/AZenith_icon.png "
-                       "-I file:///data/local/tmp/AZenith_icon.png "
-                       "'AZenith' '%s'\" >/dev/null",
-                       NOTIFY_TITLE, message);
-
-    if (exit != 0) [[clang::unlikely]] {
-        log_zenith(LOG_ERROR, "Unable to post push notification, message: %s", message);
-    }
-}
-
-/***********************************************************************************
  * Function Name      : timern
  * Inputs             : None
  * Returns            : char * - pointer to a statically allocated string

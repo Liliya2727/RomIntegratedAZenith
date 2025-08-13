@@ -88,7 +88,6 @@ int main(int argc, char* argv[]) {
     ProfileMode cur_mode = PERFCOMMON;
 
     log_zenith(LOG_INFO, "Daemon started as PID %d", getpid());
-    notify("Initializing...");
     run_profiler(PERFCOMMON); // exec perfcommon
     static bool did_notify_start = false;
 
@@ -150,10 +149,6 @@ int main(int argc, char* argv[]) {
             cur_mode = BALANCED_PROFILE;
             need_profile_checkup = false;
             log_zenith(LOG_INFO, "Applying Balanced profile");
-            if (!did_notify_start) {
-                notify("AZenith is running successfully");
-                did_notify_start = true;
-            }
             run_profiler(BALANCED_PROFILE);
         }
     }
