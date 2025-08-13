@@ -4,7 +4,6 @@ service AZenith /vendor/bin/hw/vendor.azenith-service
     class late_start
     user system
     group system
-    capabilities BLOCK_SUSPEND DAC_OVERRIDE
     oneshot
     disabled
 
