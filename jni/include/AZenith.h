@@ -21,9 +21,9 @@ extern unsigned int LOOP_INTERVAL;
 #define NOTIFY_TITLE "AZenith"
 #define LOG_TAG "AZenith"
 
-#define LOCK_FILE "/data/adb/.config/AZenith/.lock"
-#define PROFILE_MODE "/data/adb/.config/AZenith/current_profile"
-#define GAME_INFO "/data/adb/.config/AZenith/gameinfo"
+#define LOCK_FILE "/sdcard/.daemonlock"
+#define PROFILE_MODE "/sdcard/config/current_profile"
+#define GAME_INFO "/sdcard/config/gameinfo"
 #define GAMELIST "/sdcard/package.txt"
 
 #define MY_PATH                                                                                                                    \
