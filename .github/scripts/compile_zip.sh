@@ -22,6 +22,8 @@ cp -r ./init.azenith.rc modules/init
 cp -r ./tweakfls/* modules/profilersh
 cp -r ./vendor_sepolicy.cill modules/
 cp LICENSE ./modules
+cp README.md ./modules
+cp changelog.md ./modules
 
 # Remove .sh extension from scripts
 find modules/profilersh -maxdepth 1 -type f -name "*.sh" -exec sh -c 'mv -- "$0" "${0%.sh}"' {} \;
