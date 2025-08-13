@@ -60,8 +60,6 @@ int main(int argc, char* argv[]) {
             if (i < argc - 1)
                 strcat(message, " ");
         }
-
-        external_log(level, argv[1], message);
         return EXIT_SUCCESS;
     }
 
@@ -89,7 +87,7 @@ int main(int argc, char* argv[]) {
 
     log_zenith(LOG_INFO, "Daemon started as PID %d", getpid());
     run_profiler(PERFCOMMON); // exec perfcommon
-    
+
     while (1) {
         sleep(LOOP_INTERVAL);
 
