@@ -9,5 +9,5 @@ service AZenith /vendor/bin/hw/vendor.azenith-service
     disabled
 
 on post-fs-data
-    setprop debug.laya.battmon_enabled 1
+    setprop debug.azenith_enabled 1
     start AZenith
