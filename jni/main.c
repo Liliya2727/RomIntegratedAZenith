@@ -24,11 +24,6 @@ char* gamestart = NULL;
 pid_t game_pid = 0;
 
 int main(int argc, char* argv[]) {
-    // Handle case when not running on root
-    if (getuid() != 0) {
-        fprintf(stderr, "\033[31mERROR:\033[0m Please run this program as root\n");
-        exit(EXIT_FAILURE);
-    }
 
     // Expose logging interface for other modules
     char* base_name = basename(argv[0]);
