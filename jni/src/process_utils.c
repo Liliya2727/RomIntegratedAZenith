@@ -129,7 +129,6 @@ int uidof(pid_t pid) {
  *                      given process.
  ***********************************************************************************/
 void set_priority(const pid_t pid) {
-    FILE* fp = fopen(APPRIOR, "r");
     if (fp) {
         char val = fgetc(fp);
         fclose(fp);
