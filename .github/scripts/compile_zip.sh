@@ -19,14 +19,14 @@ release_code="$(git rev-parse --short HEAD)-Release"
 # Copy module files
 cp -r ./libs modules/hw
 cp -r ./init.azenith.rc modules/init
-cp -r ./tweakfls/* modules/hw
+cp -r ./tweakfls/* modules/tweakfile
 cp LICENSE ./modules
 
 # Remove .sh extension from scripts
 find modules/hw -maxdepth 1 -type f -name "*.sh" -exec sh -c 'mv -- "$0" "${0%.sh}"' {} \;
 
 # Parse version info to module prop
-zipName="AZenith-$version-$release_code"
+zipName="AZenithRomINT$version-$release_code"
 echo "zipName=$zipName" >>"$GITHUB_OUTPUT"
 
 # Zip the file

@@ -19,55 +19,28 @@
 # shellcheck disable=SC2013
 
 MODDIR=${0%/*}
-logpath="/data/adb/.config/AZenith/AZenithVerbose.log"
-logdaemonpath="/data/adb/.config/AZenith/AZenith.log"
-GAME_GOV_FILE="/data/adb/.config/AZenith/custom_game_cpu_gov"
-DEFAULT_GOV_FILE="/data/adb/.config/AZenith/custom_default_cpu_gov"
-POWERSAVE_GOV_FILE="/data/adb/.config/AZenith/custom_powersave_cpu_gov"
-
-
-AZLog() {
-    if [ "$(cat /data/adb/.config/AZenith/logger)" = "1" ]; then
-        local timestamp
-        timestamp=$(date +'%Y-%m-%d %H:%M:%S')
-        local message="$1"
-        echo "$timestamp - $message" >>"$logpath"
-        echo "$timestamp - $message"
-    fi
-}
-
-dlog() {
-    local timestamp
-    timestamp=$(date +"%Y-%m-%d %H:%M:%S.%3N")
-    local message="$1"
-    echo "$timestamp I AZenith: $message" >>"$logdaemonpath"
-}
+DEFAULT_GOV_FILE="sdcard/config/AZenithDefaultGov"
 
 zeshia() {
     local value="$1"
     local path="$2"
     if [ ! -e "$path" ]; then
-        AZLog "File $path not found, skipping..."
         return
     fi
     if [ ! -w "$path" ] && ! chmod 644 "$path" 2>/dev/null; then
-        AZLog "Cannot write to $path (permission denied)"
         return
     fi
+
     echo "$value" >"$path" 2>/dev/null
     local current
     current="$(cat "$path" 2>/dev/null)"
-    if [ "$current" = "$value" ]; then
-        AZLog "Set $path to $value"
-    else
+
+    if [ "$current" != "$value" ]; then
         echo "$value" >"$path" 2>/dev/null
         current="$(cat "$path" 2>/dev/null)"
-        if [ "$current" = "$value" ]; then
-            AZLog "Set $path to $value (after retry)"
-        else
-            AZLog "Set $path to $value (can't confirm)"
-        fi
+        # No further logging—silent retry
     fi
+
     chmod 444 "$path" 2>/dev/null
 }
 
@@ -75,28 +48,22 @@ zeshiax() {
     local value="$1"
     local path="$2"
     if [ ! -e "$path" ]; then
-        AZLog "File $path not found, skipping..."
         return
     fi
     if [ ! -w "$path" ] && ! chmod 644 "$path" 2>/dev/null; then
-        AZLog "Cannot write to $path (permission denied)"
         return
     fi
+
     echo "$value" >"$path" 2>/dev/null
     local current
     current="$(cat "$path" 2>/dev/null)"
-    if [ "$current" = "$value" ]; then
-        AZLog "Set $path to $value"
-    else
+
+    if [ "$current" != "$value" ]; then
         echo "$value" >"$path" 2>/dev/null
-        current="$(cat "$path" 2>/dev/null)"
-        if [ "$current" = "$value" ]; then
-            AZLog "Set $path to $value (after retry)"
-        else
-            AZLog "Set $path to $value (can't confirm)"
-        fi
+        # No further logging—silent retry
     fi
 }
+
 
 which_maxfreq() {
 	tr ' ' '\n' <"$1" | sort -nr | head -n 1
@@ -459,7 +426,6 @@ balanced_profile() {
 
     # Restore CPU Scaling Governor
     setgov "$default_cpu_gov"
-    dlog "Applying governor to : $default_cpu_gov"
 
     # Restore Max CPU Frequency if its from ECO Mode or using Limit Frequency
     if [ -d /proc/ppm ]; then
@@ -472,9 +438,6 @@ balanced_profile() {
 
             zeshia "$cluster $cpu_maxfreq" "/proc/ppm/policy/hard_userlimit_max_cpu_freq"
             zeshia "$cluster $cpu_minfreq" "/proc/ppm/policy/hard_userlimit_min_cpu_freq"
-
-            policy_name=$(basename "$path")
-            dlog "Set $policy_name minfreq to $cpu_minfreq"
 
             ((cluster++))
         done
@@ -551,9 +514,7 @@ balanced_profile() {
         zeshia TTWU_QUEUE /sys/kernel/debug/sched_features
     fi
 
-    if [ "$(cat /data/adb/.config/AZenith/bypass_charge)" -eq 1 ]; then
-        bypassCharge 0
-    fi
+    mediatek_balance
 
     case "$(cat /data/adb/.config/AZenith/soctype)" in
     1) mediatek_balance ;;
@@ -562,8 +523,6 @@ balanced_profile() {
     4) unisoc_balance ;;
     5) tensor_balance ;;
     esac
-
-    AZLog "Balanced Profile applied successfully!"
 
 }
 
@@ -789,6 +748,12 @@ performance_profile() {
             echo "schedutil"
         fi
     }
+    
+    # Save governor
+    CPU="/sys/devices/system/cpu/cpu0/cpufreq"
+    chmod 644 "$CPU/scaling_governor"
+    default_gov=$(cat "$CPU/scaling_governor")
+    echo "$default_gov" >$DEFAULT_GOV_FILE
 
     # Load default cpu governor
     game_cpu_gov=$(load_game_governor)
@@ -809,11 +774,8 @@ performance_profile() {
     fi
 
     # Set Governor Game
-    setgov "$game_cpu_gov"
-    dlog "Applying governor to : $game_cpu_gov"
+    setgov "performance"
 
-    # Restore Max CPU Frequency if its from ECO Mode or using Limit Frequency
-    if [ "$(cat /data/adb/.config/AZenith/cpulimit)" -eq 1 ]; then
         if [ -d /proc/ppm ]; then
             cluster=0
             for path in /sys/devices/system/cpu/cpufreq/policy*; do
@@ -821,8 +783,6 @@ performance_profile() {
 
                 zeshia "$cluster $cpu_maxfreq" "/proc/ppm/policy/hard_userlimit_max_cpu_freq"
                 zeshia "$cluster $cpu_maxfreq" "/proc/ppm/policy/hard_userlimit_min_cpu_freq"
-                policy_name=$(basename "$path")
-                dlog "Set $policy_name minfreq to $cpu_maxfreq"
                 ((cluster++))
 
             done
@@ -834,30 +794,6 @@ performance_profile() {
             zeshia "$cpu_maxfreq" "$path/scaling_min_freq"
 
         done
-    else
-        if [ -d /proc/ppm ]; then
-            cluster=0
-            for path in /sys/devices/system/cpu/cpufreq/policy*; do
-                cpu_maxfreq=$(cat "$path/cpuinfo_max_freq")
-                cpu_minfreq=$(cat "$path/cpuinfo_min_freq")
-
-                zeshia "$cluster $cpu_maxfreq" "/proc/ppm/policy/hard_userlimit_max_cpu_freq"
-                zeshia "$cluster $cpu_minfreq" "/proc/ppm/policy/hard_userlimit_min_cpu_freq"
-                policy_name=$(basename "$path")
-                dlog "Set $policy_name minfreq to $cpu_minfreq"
-                ((cluster++))
-
-            done
-        fi
-        for path in /sys/devices/system/cpu/*/cpufreq; do
-            cpu_maxfreq=$(cat "$path/cpuinfo_max_freq")
-            cpu_minfreq=$(cat "$path/cpuinfo_min_freq")
-
-            zeshia "$cpu_maxfreq" "$path/scaling_max_freq"
-            zeshia "$cpu_minfreq" "$path/scaling_min_freq"
-
-        done
-    fi
 
     # VM Cache Pressure
     zeshia "40" "/proc/sys/vm/vfs_cache_pressure"
@@ -979,6 +915,8 @@ performance_profile() {
         bypassCharge 1
     fi
 
+    mediatek_performance
+
     case "$(cat /data/adb/.config/AZenith/soctype)" in
     1) mediatek_performance ;;
     2) snapdragon_performance ;;
@@ -986,8 +924,6 @@ performance_profile() {
     4) unisoc_performance ;;
     5) tensor_performance ;;
     esac
-
-    AZLog "Performance Profile Applied Successfully!"
 
 }
 ###############################################
@@ -1163,8 +1099,7 @@ eco_mode() {
     }
     powersave_cpu_gov=$(load_powersave_governor)
 
-    setgov "$powersave_cpu_gov"
-    dlog "Applying governor to : $powersave_cpu_gov"
+    setgov "powersave"
 
     # Power level settings
     for pl in /sys/devices/system/cpu/perf; do
@@ -1179,10 +1114,6 @@ eco_mode() {
         cmd notification set_dnd off && AZLog "DND disabled" || AZLog "Failed to disable DND"
     fi
 
-    # CPU Freq Limiter
-    limiter=$(cat /data/adb/.config/AZenith/customFreqOffset | sed -e 's/Disabled/100/' -e 's/%//g')
-    AZLog "Cpu limit is set to $limiter"
-
     # Limit cpu freq
     if [ -d /proc/ppm ]; then
         cluster=0
@@ -1190,13 +1121,8 @@ eco_mode() {
             cpu_maxfreq=$(cat "$path/cpuinfo_max_freq")
             cpu_minfreq=$(cat "$path/cpuinfo_min_freq")
 
-            new_maxfreq=$((cpu_maxfreq * $limiter / 100))
-            new_minfreq=$((cpu_maxfreq * 40 / 100))
-
-            zeshia "$cluster $new_maxfreq" "/proc/ppm/policy/hard_userlimit_max_cpu_freq"
+            zeshia "$cluster $cpu_maxfreq" "/proc/ppm/policy/hard_userlimit_max_cpu_freq"
             zeshia "$cluster $cpu_minfreq" "/proc/ppm/policy/hard_userlimit_min_cpu_freq"
-            policy_name=$(basename "$path")
-            dlog "Set $policy_name maxfreq to $limiter% of maxfreq $new_maxfreq and minfreq $cpu_minfreq"
             ((cluster++))
         done
     fi
@@ -1204,10 +1130,7 @@ eco_mode() {
         cpu_maxfreq=$(cat "$path/cpuinfo_max_freq")
         cpu_minfreq=$(cat "$path/cpuinfo_min_freq")
 
-        new_maxfreq=$((cpu_maxfreq * $limiter / 100))
-        new_minfreq=$((cpu_maxfreq * 40 / 100))
-
-        zeshia "$new_maxfreq" "$path/scaling_max_freq"
+        zeshia "$cpu_maxfreq" "$path/scaling_max_freq"
         zeshia "$cpu_minfreq" "$path/scaling_min_freq"
     done
 
@@ -1231,10 +1154,8 @@ eco_mode() {
         zeshia NO_NEXT_BUDDY /sys/kernel/debug/sched_features
         zeshia NO_TTWU_QUEUE /sys/kernel/debug/sched_features
     fi
-
-    if [ "$(cat /data/adb/.config/AZenith/bypass_charge)" -eq 1 ]; then
-        bypassCharge 0
-    fi
+    
+    mediatek_powersave
 
     case "$(cat /data/adb/.config/AZenith/soctype)" in
     1) mediatek_powersave ;;
@@ -1271,313 +1192,14 @@ initialize() {
     zeshia 0 /proc/sys/vm/compaction_proactiveness
 
     zeshia 255 /proc/sys/kernel/sched_lib_mask_force
+    
+    CPU="/sys/devices/system/cpu/cpu0/cpufreq"
+    chmod 644 "$CPU/scaling_governor"
+    default_gov=$(cat "$CPU/scaling_governor")
+    echo "$default_gov" >$DEFAULT_GOV_FILE
 
     sync
 
-    schedtunes() {
-        settunes() {
-            local policy_path="$1"
-
-            # Check if the policy path exists
-            if [ ! -d "$policy_path" ]; then
-                AZLog "Skipped: $policy_path (not available)"
-                return
-            fi
-
-            # Read available frequencies
-            local available_freqs=$(cat "$policy_path/scaling_available_frequencies" 2>/dev/null)
-            if [ -z "$available_freqs" ]; then
-                AZLog "Skipped: No available frequencies for $policy_path"
-                return
-            fi
-
-            # Select the 6 highest frequencies
-            local selected_freqs=$(echo "$available_freqs" | tr ' ' '\n' | sort -rn | head -n 6 | tr '\n' ' ' | sed 's/ $//')
-
-            # Generate up_delay values dynamically
-            local num_freqs=$(echo "$selected_freqs" | wc -w)
-            local up_delay=""
-            for i in $(seq 1 $num_freqs); do
-                up_delay="$up_delay $((50 * i))"
-            done
-            up_delay=$(echo "$up_delay" | sed 's/^ //')
-
-            # Define universal rate values
-            local up_rate=7500
-            local down_rate=14000
-
-            # Check for schedhorizon and schedutil paths
-            local schedhorizon_path="$policy_path/schedhorizon"
-            local schedutil_path="$policy_path/schedutil"
-
-            if [ -d "$schedhorizon_path" ]; then
-                zeshia "$up_delay" "$schedhorizon_path/up_delay"
-                zeshia "$selected_freqs" "$schedhorizon_path/efficient_freq"
-                zeshia "$up_rate" "$schedhorizon_path/up_rate_limit_us"
-                zeshia "$down_rate" "$schedhorizon_path/down_rate_limit_us"
-            fi
-
-            if [ -d "$schedutil_path" ]; then
-                zeshia "$up_rate" "$schedutil_path/up_rate_limit_us"
-                zeshia "$down_rate" "$schedutil_path/down_rate_limit_us"
-            fi
-        }
-        for policy in /sys/devices/system/cpu/cpufreq/policy*; do
-            settunes "$policy"
-        done
-    }
-
-    fpsgoandgedparams() {
-        # GED parameters
-        ged_params="ged_smart_boost 1
-boost_upper_bound 100
-enable_gpu_boost 1
-enable_cpu_boost 1
-ged_boost_enable 1
-boost_gpu_enable 1
-gpu_dvfs_enable 1
-gx_frc_mode 1
-gx_dfps 1
-gx_force_cpu_boost 1
-gx_boost_on 1
-gx_game_mode 1
-gx_3D_benchmark_on 1
-gpu_loading 0
-cpu_boost_policy 1
-boost_extra 1
-is_GED_KPI_enabled 0"
-
-        zeshia "$ged_params" | while read -r param value; do
-            zeshia "$value" "/sys/module/ged/parameters/$param"
-        done
-
-        # FPSGO Configuration Tweaks
-        zeshia "0" /sys/kernel/fpsgo/fbt/boost_ta
-        zeshia "1" /sys/kernel/fpsgo/fbt/enable_switch_down_throttle
-        zeshia "1" /sys/kernel/fpsgo/fstb/adopt_low_fps
-        zeshia "1" /sys/kernel/fpsgo/fstb/fstb_self_ctrl_fps_enable
-        zeshia "0" /sys/kernel/fpsgo/fstb/boost_ta
-        zeshia "1" /sys/kernel/fpsgo/fstb/enable_switch_sync_flag
-        zeshia "0" /sys/kernel/fpsgo/fbt/boost_VIP
-        zeshia "1" /sys/kernel/fpsgo/fstb/gpu_slowdown_check
-        zeshia "1" /sys/kernel/fpsgo/fbt/thrm_limit_cpu
-        zeshia "0" /sys/kernel/fpsgo/fbt/thrm_temp_th
-        zeshia "0" /sys/kernel/fpsgo/fbt/llf_task_policy
-        zeshia "100" /sys/module/mtk_fpsgo/parameters/uboost_enhance_f
-        zeshia "0" /sys/module/mtk_fpsgo/parameters/isolation_limit_cap
-        zeshia "1" /sys/pnpmgr/fpsgo_boost/boost_enable
-        zeshia "1" /sys/pnpmgr/fpsgo_boost/boost_mode
-        zeshia "1" /sys/pnpmgr/install
-        zeshia "100" /sys/kernel/ged/hal/gpu_boost_level
-
-    }
-
-    malisched() {
-        # GPU Mali Scheduling
-        mali_dir=$(ls -d /sys/devices/platform/soc/*mali*/scheduling 2>/dev/null | head -n 1)
-        mali1_dir=$(ls -d /sys/devices/platform/soc/*mali* 2>/dev/null | head -n 1)
-        if [ -n "$mali_dir" ]; then
-            zeshia "full" "$mali_dir/serialize_jobs"
-        fi
-        if [ -n "$mali1_dir" ]; then
-            zeshia "1" "$mali1_dir/js_ctx_scheduling_mode"
-        fi
-    }
-
-    SFL() {
-        resetprop -n debug.sf.disable_backpressure 1
-        resetprop -n debug.sf.latch_unsignaled 1
-        resetprop -n debug.sf.enable_hwc_vds 1
-        resetprop -n debug.sf.early_phase_offset_ns 300000
-        resetprop -n debug.sf.early_app_phase_offset_ns 300000
-        resetprop -n debug.sf.early_gl_phase_offset_ns 2000000
-        resetprop -n debug.sf.early_gl_app_phase_offset_ns 10000000
-        resetprop -n debug.sf.high_fps_early_phase_offset_ns 5000000
-        resetprop -n debug.sf.high_fps_early_gl_phase_offset_ns 500000
-        resetprop -n debug.sf.high_fps_late_app_phase_offset_ns 80000
-        resetprop -n debug.sf.phase_offset_threshold_for_next_vsync_ns 5000000
-        resetprop -n debug.sf.showupdates 0
-        resetprop -n debug.sf.showcpu 0
-        resetprop -n debug.sf.showbackground 0
-        resetprop -n debug.sf.showfps 0
-        resetprop -n debug.sf.hw 1
-    }
-
-    DThermal() {
-
-        propfile() {
-            while read -r key value; do
-                resetprop -n "$key" "$value"
-                echo "[$(date)] Reset $key to $value"
-            done <<EOF
-debug.thermal.throttle.support no
-ro.vendor.mtk_thermal_2_0 0
-persist.thermal_config.mitigation 0
-ro.mtk_thermal_monitor.enabled false
-ro.vendor.tran.hbm.thermal.temp.clr 49000
-ro.vendor.tran.hbm.thermal.temp.trig 46000
-vendor.thermal.link_ready 0
-dalvik.vm.dexopt.thermal-cutoff 0
-persist.vendor.thermal.engine.enable 0
-persist.vendor.thermal.config 0
-EOF
-        }
-
-        thermal() {
-            find /system/etc/init /vendor/etc/init /odm/etc/init -type f 2>/dev/null | xargs grep -h "^service" | awk '{print $2}' | grep thermal
-        }
-
-        for svc in $(thermal); do
-            stop "$svc"
-        done
-
-        # Freeze all running thermal processes
-        for pid in $(pgrep thermal); do
-            kill -SIGSTOP "$pid"
-        done
-
-        # Clear init.svc_ properties only if they exist
-        for prop in $(getprop | awk -F '[][]' '/init\.svc_/ {print $2}'); do
-            if [ -n "$prop" ]; then
-                resetprop -n "$prop" ""
-            fi
-        done
-
-        for dead in \
-            android.hardware.thermal-service.mediatek android.hardware.thermal@2.0-service.mtk; do
-            stop "$dead"
-            pid=$(pidof "$dead")
-            if [ -n "$pid" ]; then
-                kill -SIGSTOP "$pid"
-            fi
-        done
-
-        for prop in $(getprop | grep thermal | cut -f1 -d] | cut -f2 -d[ | grep -F init.svc.); do
-            setprop "$prop" stopped
-        done
-
-        for prop in $(getprop | grep thermal | cut -f1 -d] | cut -f2 -d[ | grep -F init.svc_); do
-            setprop "$prop" ""
-        done
-
-        # Disable thermal zones
-        chmod 644 /sys/class/thermal/thermal_zone*/mode
-        for zone in /sys/class/thermal/thermal_zone*/mode; do
-            [ -f "$zone" ] && echo "disabled" >"$zone"
-        done
-
-        for zone2 in /sys/class/thermal/thermal_zone*/policy; do
-            [ -f "$zone2" ] && echo "userspace" >"$zone2"
-        done
-
-        # Disable GPU Power Limitations
-        if [ -f "/proc/gpufreq/gpufreq_power_limited" ]; then
-            for setting in ignore_batt_oc ignore_batt_percent ignore_low_batt ignore_thermal_protect ignore_pbm_limited; do
-                echo "$setting 1" >/proc/gpufreq/gpufreq_power_limited
-            done
-        fi
-
-        # Set CPU limits based on max frequency
-        if [ -f /sys/devices/virtual/thermal/thermal_message/cpu_limits ]; then
-            for cpu in 0 2 4 6 7; do
-                maxfreq_path="/sys/devices/system/cpu/cpu$cpu/cpufreq/cpuinfo_max_freq"
-                if [ -f "$maxfreq_path" ]; then
-                    maxfreq=$(cat "$maxfreq_path")
-                    [ -n "$maxfreq" ] && [ "$maxfreq" -gt 0 ] && echo "cpu$cpu $maxfreq" >/sys/devices/virtual/thermal/thermal_message/cpu_limits
-                fi
-            done
-        fi
-
-        # Disable PPM (Power Policy Manager) Limits
-        if [ -d /proc/ppm ]; then
-            if [ -f /proc/ppm/policy_status ]; then
-                for idx in $(grep -E 'FORCE_LIMIT|PWR_THRO|THERMAL' /proc/ppm/policy_status | awk -F'[][]' '{print $2}'); do
-                    echo "$idx 0" >/proc/ppm/policy_status
-                done
-            fi
-        fi
-
-        # Hide and disable monitoring of thermal zones
-        find /sys/devices/virtual/thermal -type f -exec chmod 000 {} +
-
-        # Disable Thermal Stats
-        cmd thermalservice override-status 0
-
-        # Disable Battery Overcharge Thermal Throttling
-        if [ -f "/proc/mtk_batoc_throttling/battery_oc_protect_stop" ]; then
-            echo "stop 1" >/proc/mtk_batoc_throttling/battery_oc_protect_stop
-        fi
-
-        AZLog "Thermal service Disabled"
-    }
-
-    kill_logd() {
-        zeshia 0 /sys/kernel/ccci/debug
-        zeshia 0 /sys/kernel/tracing/tracing_on
-        zeshia 0 /proc/sys/kernel/perf_event_paranoid
-        zeshia 0 /proc/sys/kernel/debug_locks
-        zeshia 0 /proc/sys/kernel/perf_cpu_time_max_percent
-        zeshia off /proc/sys/kernel/printk_devkmsg
-    }
-    # List of logging services
-    list_logger="
-    logd
-    traced
-    statsd
-    tcpdump
-    cnss_diag
-    subsystem_ramdump
-    charge_logger
-    wlan_logging
-    "
-
-    # Logd
-    if [ -f /data/adb/.config/AZenith/logd ] && [ "$(cat /data/adb/.config/AZenith/logd)" -eq 1 ]; then
-        for logger in $list_logger; do
-            stop "$logger" 2>/dev/null
-        done
-    else
-        for logger in $list_logger; do
-            start "$logger" 2>/dev/null
-        done
-    fi
-
-    if [ "$(cat /data/adb/.config/AZenith/logd)" -eq 1 ]; then
-        kill_logd
-    fi
-    if [ "$(cat /data/adb/.config/AZenith/DThermal)" -eq 1 ]; then
-        DThermal
-    fi
-    if [ "$(cat /data/adb/.config/AZenith/SFL)" -eq 1 ]; then
-        SFL
-    fi
-    if [ "$(cat /data/adb/.config/AZenith/malisched)" -eq 1 ]; then
-        malisched
-    fi
-    if [ "$(cat /data/adb/.config/AZenith/fpsged)" -eq 1 ]; then
-        fpsgoandgedparams
-    fi
-    if [ "$(cat /data/adb/.config/AZenith/schedtunes)" -eq 1 ]; then
-        schedtunes
-    fi
-
-    vsync_value="$(cat /data/adb/.config/AZenith/customVsync)"
-    case "$vsync_value" in
-    60hz | 90hz | 120hz)
-        disablevsync "$vsync_value"
-        ;;
-    Disabled)
-        AZLog "disable vsync disabled"
-        ;;
-    esac
-
-    sync
-
-    if [ "$(cat /data/adb/.config/AZenith/bypass_charge)" -eq 1 ]; then
-        bypassCharge 0
-    fi
-
-}
 
 ###############################################
 
