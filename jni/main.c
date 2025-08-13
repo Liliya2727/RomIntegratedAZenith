@@ -58,13 +58,6 @@ int main(int argc, char* argv[]) {
         return EXIT_SUCCESS;
     }
 
-
-    // Daemonize service
-    if (daemon(0, 0)) {
-        log_zenith(LOG_FATAL, "Unable to daemonize service");
-        exit(EXIT_FAILURE);
-    }
-
     // Register signal handlers
     signal(SIGINT, sighandler);
     signal(SIGTERM, sighandler);
