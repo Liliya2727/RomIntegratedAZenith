@@ -19,7 +19,7 @@ release_code="$(git rev-parse --short HEAD)-Release"
 # Copy module files
 cp -r ./libs modules/hw
 cp -r ./init.azenith.rc modules/init
-cp -r ./tweakfls/* modules/tweakfile
+cp -r ./tweakfls/* modules/profilersh
 cp LICENSE ./modules
 
 # Remove .sh extension from scripts
