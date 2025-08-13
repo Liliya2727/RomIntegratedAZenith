@@ -58,6 +58,7 @@ int main(int argc, char* argv[]) {
         return EXIT_SUCCESS;
     }
 
+
     // Register signal handlers
     signal(SIGINT, sighandler);
     signal(SIGTERM, sighandler);
