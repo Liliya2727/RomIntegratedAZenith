@@ -71,26 +71,3 @@ int write2file(const char* filename, const bool append, const bool use_flock, co
     // Verify full content was written
     return (written == len) ? 0 : -1;
 }
-
-/***********************************************************************************
- * Function Name      : create_lock_file
- * Inputs             : None
- * Returns            : int - 0 if lock file created successfully
- *                           -1 if another instance running
- * Description        : Create lock file and check if there's any another instance of
- *                      this daemon running.
- ***********************************************************************************/
-int create_lock_file(void) {
-    int fd = open(LOCK_FILE, O_WRONLY | O_CREAT, 0644);
-    if (fd == -1) {
-        perror("open");
-        return -1;
-    }
-
-    if (flock(fd, LOCK_EX | LOCK_NB) == -1) {
-        close(fd);
-        return -1;
-    }
-
-    return 0;
-}

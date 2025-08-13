@@ -34,5 +34,3 @@
 (allow init sysfs_devices_system_cpu (file (write)))
 (allow init sysfs_backlight_file (file (read open getattr watch)))
 (allow init sysfs_backlight_file (dir (read open search)))
-(allow vendor_init sysfs_backlight_file (file (read open getattr watch)))
-(allow vendor_init sysfs_backlight_file (dir (read open search)))
