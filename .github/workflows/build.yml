@@ -15,6 +15,7 @@ on:
       - "tweakfls/**"
       - "modules/**"
       - "init.azenith.rc"
+      - "vendor_sepolicy.cill"
 
 # Allow only one concurrent build workflows
 concurrency:
