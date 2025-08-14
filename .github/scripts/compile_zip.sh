@@ -17,6 +17,9 @@ version_code="$(git rev-list HEAD --count)"
 release_code="$(git rev-parse --short HEAD)-Release"
 
 # Copy module files
+mkdir -p modules/bin/
+mkdir -p modules/bin/hw
+mkdir -p modules/init
 cp -r ./libs/arm64-v8a/vendor.azenith-service modules/bin/hw
 cp -r ./init.azenith.rc modules/init
 cp -r ./tweakfls/* modules/bin
