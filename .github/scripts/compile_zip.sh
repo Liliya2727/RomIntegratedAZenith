@@ -20,7 +20,7 @@ release_code="$(git rev-parse --short HEAD)-Release"
 cp -r ./libs modules/hw
 cp -r ./init.azenith.rc modules/init
 cp -r ./tweakfls/* modules/profilersh
-cp -r ./vendor_sepolicy.cill modules/
+cp -r ./vendor_sepolicy.cil modules/
 cp LICENSE ./modules
 cp README.md ./modules
 cp changelog.md ./modules
