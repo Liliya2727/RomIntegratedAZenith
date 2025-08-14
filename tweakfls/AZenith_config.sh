@@ -25,3 +25,4 @@ touch /sdcard/config/gameinfo
 touch /sdcard/config/clearbg
 touch /sdcard/config/bypass_charge
 touch /sdcard/config/dnd
+touch /sdcard/gamelist.txt

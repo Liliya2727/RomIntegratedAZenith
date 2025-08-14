@@ -23,7 +23,7 @@ extern unsigned int LOOP_INTERVAL;
 
 #define PROFILE_MODE "/sdcard/config/current_profile"
 #define GAME_INFO "/sdcard/config/gameinfo"
-#define GAMELIST "/sdcard/package.txt"
+#define GAMELIST "/sdcard/gamelist.txt"
 
 #define MY_PATH                                                                                                                    \
     "PATH=/vendor/bin/hw"
