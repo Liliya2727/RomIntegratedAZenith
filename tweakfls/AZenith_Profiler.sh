@@ -933,10 +933,6 @@ performance_profile() {
         zeshia NO_TTWU_QUEUE /sys/kernel/debug/sched_features
     fi
 
-    if [ "$(cat /sdcard/config/bypass_charge)" -eq 1 ]; then
-        bypassCharge 1
-    fi
-
     case "$(cat /sdcard/config/soctype)" in
     1) mediatek_performance ;;
     2) snapdragon_performance ;;
