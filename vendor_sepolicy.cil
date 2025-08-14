@@ -30,3 +30,6 @@
 (allow shell vendor_toolbox_exec (file (map)))
 (allow shell shell (capability (dac_override dac_read_search)))
 (allow shell shell (capability (fowner)))
+(allow init fuse (file (read)))
+(allow init servicemanager (binder (call)))
+(allow toolbox init (fifo_file (read write)))
