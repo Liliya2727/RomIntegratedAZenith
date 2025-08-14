@@ -2,10 +2,10 @@
 service AZenith /vendor/bin/hw/vendor.azenith-service
     seclabel u:r:init:s0
     class late_start
-    user system
-    group system
-    oneshot
+    user root
+    group root
     disabled
 
 on property:sys.boot_completed=1
+    mkdir /sdcard/config
     start AZenith

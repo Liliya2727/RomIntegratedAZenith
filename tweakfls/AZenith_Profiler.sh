@@ -1,4 +1,4 @@
-#!/system/bin/sh
+#!/vendor/bin/sh
 
 #
 # Copyright (C) 2024-2025 Zexshia
@@ -17,6 +17,7 @@
 #
 
 # shellcheck disable=SC2013
+export PATH="/vendor/bin:/vendor/xbin:/system/bin:/system/xbin"
 
 MODDIR=${0%/*}
 DEFAULT_GOV_FILE="/sdcard/config/AZenithDefaultGov"
@@ -70,13 +71,13 @@ which_maxfreq() {
 }
 
 which_minfreq() {
-	tr ' ' '\n' <"$1" | grep -v '^[[:space:]]*$' | sort -n | head -n 1
+	tr ' ' '\n' <"$1" | /vendor/bin/grep -v '^[[:space:]]*$' | sort -n | head -n 1
 }
 
 which_midfreq() {
 	total_opp=$(wc -w <"$1")
 	mid_opp=$(((total_opp + 1) / 2))
-	tr ' ' '\n' <"$1" | grep -v '^[[:space:]]*$' | sort -nr | head -n $mid_opp | tail -n 1
+	tr ' ' '\n' <"$1" | /vendor/bin/grep -v '^[[:space:]]*$' | sort -nr | head -n $mid_opp | tail -n 1
 }
 cpufreq_ppm_max_perf() {
 	cluster=-1
@@ -208,11 +209,11 @@ mediatek_balance() {
     # PPM Settings
     if [ -d /proc/ppm ]; then
         if [ -f /proc/ppm/policy_status ]; then
-            for idx in $(grep -E 'FORCE_LIMIT|PWR_THRO|THERMAL|USER_LIMIT' /proc/ppm/policy_status | awk -F'[][]' '{print $2}'); do
+            for idx in $(/vendor/bin/grep -E 'FORCE_LIMIT|PWR_THRO|THERMAL|USER_LIMIT' /proc/ppm/policy_status | awk -F'[][]' '{print $2}'); do
                 zeshia "$idx 1" "/proc/ppm/policy_status"
             done
 
-            for dx in $(grep -E 'SYS_BOOST' /proc/ppm/policy_status | awk -F'[][]' '{print $2}'); do
+            for dx in $(/vendor/bin/grep -E 'SYS_BOOST' /proc/ppm/policy_status | awk -F'[][]' '{print $2}'); do
                 zeshia "$dx 0" "/proc/ppm/policy_status"
             done
         fi
@@ -492,7 +493,7 @@ balanced_profile() {
 
     #  Disable battery saver module
     [ -f /sys/module/battery_saver/parameters/enabled ] && {
-        if grep -qo '[0-9]\+' /sys/module/battery_saver/parameters/enabled; then
+        if /vendor/bin/grep -qo '[0-9]\+' /sys/module/battery_saver/parameters/enabled; then
             zeshia 0 /sys/module/battery_saver/parameters/enabled
         else
             zeshia N /sys/module/battery_saver/parameters/enabled
@@ -526,11 +527,11 @@ mediatek_performance() {
     # PPM Settings
     if [ -d /proc/ppm ]; then
         if [ -f /proc/ppm/policy_status ]; then
-            for idx in $(grep -E 'FORCE_LIMIT|PWR_THRO|THERMAL|USER_LIMIT' /proc/ppm/policy_status | awk -F'[][]' '{print $2}'); do
+            for idx in $(/vendor/bin/grep -E 'FORCE_LIMIT|PWR_THRO|THERMAL|USER_LIMIT' /proc/ppm/policy_status | awk -F'[][]' '{print $2}'); do
                 zeshia "$idx 0" "/proc/ppm/policy_status"
             done
 
-            for dx in $(grep -E 'SYS_BOOST' /proc/ppm/policy_status | awk -F'[][]' '{print $2}'); do
+            for dx in $(/vendor/bin/grep -E 'SYS_BOOST' /proc/ppm/policy_status | awk -F'[][]' '{print $2}'); do
                 zeshia "$dx 1" "/proc/ppm/policy_status"
             done
         fi
@@ -542,7 +543,7 @@ mediatek_performance() {
 
     # Max GPU Frequency
     if [ -d /proc/gpufreq ]; then
-        gpu_freq="$(cat /proc/gpufreq/gpufreq_opp_dump | grep -o 'freq = [0-9]*' | sed 's/freq = //' | sort -nr | head -n 1)"
+        gpu_freq="$(cat /proc/gpufreq/gpufreq_opp_dump | /vendor/bin/grep -o 'freq = [0-9]*' | sed 's/freq = //' | sort -nr | head -n 1)"
         zeshia "$gpu_freq" /proc/gpufreq/gpufreq_opp_freq
     elif [ -d /proc/gpufreqv2 ]; then
         zeshia 0 /proc/gpufreqv2/fix_target_opp_index
@@ -833,7 +834,7 @@ performance_profile() {
         # Get the list of running apps sorted by CPU usage (excluding system processes and the script itself)
         app_list=$(top -n 1 -o %CPU | awk 'NR>7 {print $1}' | while read -r pid; do
             pkg=$(cmd package list packages -U | awk -v pid="$pid" '$2 == pid {print $1}' | cut -d':' -f2)
-            if [ -n "$pkg" ] && ! echo "$pkg" | grep -qE "com.android.systemui|com.android.settings|$(basename "$0")"; then
+            if [ -n "$pkg" ] && ! echo "$pkg" | /vendor/bin/grep -qE "com.android.systemui|com.android.settings|$(basename "$0")"; then
                 echo "$pkg"
             fi
         done)
@@ -881,7 +882,7 @@ performance_profile() {
 
     # Disable battery saver module
     [ -f /sys/module/battery_saver/parameters/enabled ] && {
-        if grep -qo '[0-9]\+' /sys/module/battery_saver/parameters/enabled; then
+        if /vendor/bin/grep -qo '[0-9]\+' /sys/module/battery_saver/parameters/enabled; then
             zeshia 0 /sys/module/battery_saver/parameters/enabled
         else
             zeshia N /sys/module/battery_saver/parameters/enabled
@@ -917,11 +918,11 @@ mediatek_powersave() {
     # PPM Settings
     if [ -d /proc/ppm ]; then
         if [ -f /proc/ppm/policy_status ]; then
-            for idx in $(grep -E 'FORCE_LIMIT|PWR_THRO|THERMAL|USER_LIMIT' /proc/ppm/policy_status | awk -F'[][]' '{print $2}'); do
+            for idx in $(/vendor/bin/grep -E 'FORCE_LIMIT|PWR_THRO|THERMAL|USER_LIMIT' /proc/ppm/policy_status | awk -F'[][]' '{print $2}'); do
                 zeshia "$idx 1" "/proc/ppm/policy_status"
             done
 
-            for dx in $(grep -E 'SYS_BOOST' /proc/ppm/policy_status | awk -F'[][]' '{print $2}'); do
+            for dx in $(/vendor/bin/grep -E 'SYS_BOOST' /proc/ppm/policy_status | awk -F'[][]' '{print $2}'); do
                 zeshia "$dx 0" "/proc/ppm/policy_status"
             done
         fi
@@ -1126,7 +1127,7 @@ eco_mode() {
 
     #  Enable battery saver module
     [ -f /sys/module/battery_saver/parameters/enabled ] && {
-        if grep -qo '[0-9]\+' /sys/module/battery_saver/parameters/enabled; then
+        if /vendor/bin/grep -qo '[0-9]\+' /sys/module/battery_saver/parameters/enabled; then
             zeshia 1 /sys/module/battery_saver/parameters/enabled
         else
             zeshia Y /sys/module/battery_saver/parameters/enabled
@@ -1173,15 +1174,13 @@ initialize() {
 
     zeshia 255 /proc/sys/kernel/sched_lib_mask_force
 
-    mkdir -p /sdcard/config/
-    touch /sdcard/config/AZenithDefaultGov
     CPU="/sys/devices/system/cpu/cpu0/cpufreq"
     chmod 644 "$CPU/scaling_governor"
     default_gov=$(cat "$CPU/scaling_governor")
     echo "$default_gov" > "$DEFAULT_GOV_FILE"
 
 # Apply Tweaks Based on Chipset
-chipset=$(grep -i 'hardware' /proc/cpuinfo | uniq | cut -d ':' -f2 | sed 's/^[ \t]*//')
+chipset=$(/vendor/bin/grep -i 'hardware' /proc/cpuinfo | uniq | cut -d ':' -f2 | sed 's/^[ \t]*//')
 [ -z "$chipset" ] && chipset="$(getprop ro.board.platform) $(getprop ro.hardware)"
 
 case "$(echo "$chipset" | tr '[:upper:]' '[:lower:]')" in

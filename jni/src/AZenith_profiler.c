@@ -52,7 +52,7 @@ void run_profiler(const int profile) {
  * Note               : Caller is responsible for freeing the returned string.
  ***********************************************************************************/
 char* get_gamestart(void) {
-    return execute_command("dumpsys window visible-apps | grep 'package=.* ' | grep -Eo -f %s", GAMELIST);
+    return execute_command("/vendor/bin/dumpsys window visible-apps | grep 'package=.* ' | grep -Eo -f %s", GAMELIST);
 }
 /***********************************************************************************
  * Function Name      : get_screenstate_normal
@@ -67,7 +67,7 @@ char* get_gamestart(void) {
 bool get_screenstate_normal(void) {
     static char fetch_failed = 0;
 
-    char* screenstate = execute_command("dumpsys power | grep -Eo 'mWakefulness=Awake|mWakefulness=Asleep' "
+    char* screenstate = execute_command("/vendor/bin/dumpsys power | grep -Eo 'mWakefulness=Awake|mWakefulness=Asleep' "
                                         "| awk -F'=' '{print $2}'");
 
     if (screenstate) [[clang::likely]] {
@@ -104,7 +104,7 @@ bool get_low_power_state_normal(void) {
 
     char* low_power = execute_direct("/system/bin/settings", "settings", "get", "global", "low_power", NULL);
     if (!low_power) {
-        low_power = execute_command("dumpsys power | grep -Eo "
+        low_power = execute_command("/vendor/bin/dumpsys power | grep -Eo "
                                     "'mSettingBatterySaverEnabled=true|mSettingBatterySaverEnabled=false' | "
                                     "awk -F'=' '{print $2}'");
     }
