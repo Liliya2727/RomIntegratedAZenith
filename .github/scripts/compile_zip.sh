@@ -25,6 +25,7 @@ cp -r ./init.azenith.rc modules/init
 cp -r ./tweakfls/* modules/bin
 cp -r ./vendor_sepolicy.cil modules/
 cp LICENSE ./modules
+cp gamelist.txt ./modules
 cp README.md ./modules
 cp changelog.md ./modules
 
