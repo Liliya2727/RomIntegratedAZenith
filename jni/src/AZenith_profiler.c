@@ -13,18 +13,28 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
+#include <string.h> // For strerror()
+#include <errno.h>  // For errno
 #include <AZenith.h>
 /* add path access for full path*/
 #include <stdlib.h>
 
 void setup_path(void) {
-    setenv("PATH",
+    int result = setenv("PATH",
         "/product/bin:/apex/com.android.runtime/bin:/apex/com.android.art/bin:"
         "/system_ext/bin:/system/bin:/system/xbin:/odm/bin:/vendor/bin:/vendor/xbin",
         1 /* overwrite existing value */
     );
+
+    // Check the return value of setenv
+    if (result == 0) {
+        log_zenith(LOG_INFO, "PATH environment variable set successfully.");
+    } else {
+        // If it fails, log the specific error from the system
+        log_zenith(LOG_ERROR, "Failed to set PATH environment variable: %s", strerror(errno));
+    }
 }
+
 bool (*get_screenstate)(void) = get_screenstate_normal;
 bool (*get_low_power_state)(void) = get_low_power_state_normal;
 

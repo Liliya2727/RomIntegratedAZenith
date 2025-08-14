@@ -42,7 +42,7 @@ service AZenith /vendor/bin/hw/vendor.azenith-service
     seclabel u:r:init:s0
     class late_start
     user root
-    group root
+    group root system media_rw
     disabled
 
 # Exec service
