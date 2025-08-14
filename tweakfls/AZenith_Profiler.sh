@@ -1251,4 +1251,4 @@ esac
 $@
 wait
 AZLog "AZenith script finished."
-exit 0
+exit
