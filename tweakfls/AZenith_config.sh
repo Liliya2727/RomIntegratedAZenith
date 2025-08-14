@@ -15,6 +15,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 #
+# export full path to ensure ts runs
+export PATH="/product/bin:/apex/com.android.runtime/bin:/apex/com.android.art/bin:/system_ext/bin:/system/bin:/system/xbin:/odm/bin:/vendor/bin:/vendor/xbin"
 
 # Make dir and files before writing
 mkdir -p /sdcard/config/
@@ -26,3 +28,6 @@ touch /sdcard/config/clearbg
 touch /sdcard/config/bypass_charge
 touch /sdcard/config/dnd
 touch /sdcard/gamelist.txt
+
+# start azenith daemon
+setprop sys.azenith.config ready

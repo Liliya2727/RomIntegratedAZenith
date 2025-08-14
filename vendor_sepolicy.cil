@@ -33,3 +33,8 @@
 (allow init fuse (file (read)))
 (allow init servicemanager (binder (call)))
 (allow toolbox init (fifo_file (read write)))
+(allow init power_service (service_manager (find)))
+(allow init settings_service (service_manager (find)))
+(allow init window_service (service_manager (find)))
+(allow toolbox init (fifo_file (getattr)))
+(allow vendor_init vendor_mtk_pq_prop (property_service (set)))
