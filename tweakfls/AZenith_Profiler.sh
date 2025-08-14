@@ -242,11 +242,11 @@ mediatek_balance() {
     # PPM Settings
     if [ -d /proc/ppm ]; then
         if [ -f /proc/ppm/policy_status ]; then
-            for idx in $(/vendor/bin/grep -E 'FORCE_LIMIT|PWR_THRO|THERMAL|USER_LIMIT' /proc/ppm/policy_status | awk -F'[][]' '{print $2}'); do
+            for idx in $(/vendor/bin/grep -E 'FORCE_LIMIT|PWR_THRO|THERMAL|USER_LIMIT' /proc/ppm/policy_status | /system/bin/awk -F'[][]' '{print $2}'); do
                 zeshia "$idx 1" "/proc/ppm/policy_status"
             done
 
-            for dx in $(/vendor/bin/grep -E 'SYS_BOOST' /proc/ppm/policy_status | awk -F'[][]' '{print $2}'); do
+            for dx in $(/vendor/bin/grep -E 'SYS_BOOST' /proc/ppm/policy_status | /system/bin/awk -F'[][]' '{print $2}'); do
                 zeshia "$dx 0" "/proc/ppm/policy_status"
             done
         fi
@@ -561,11 +561,11 @@ mediatek_performance() {
     # PPM Settings
     if [ -d /proc/ppm ]; then
         if [ -f /proc/ppm/policy_status ]; then
-            for idx in $(/vendor/bin/grep -E 'FORCE_LIMIT|PWR_THRO|THERMAL|USER_LIMIT' /proc/ppm/policy_status | awk -F'[][]' '{print $2}'); do
+            for idx in $(/vendor/bin/grep -E 'FORCE_LIMIT|PWR_THRO|THERMAL|USER_LIMIT' /proc/ppm/policy_status | /system/bin/awk -F'[][]' '{print $2}'); do
                 zeshia "$idx 0" "/proc/ppm/policy_status"
             done
 
-            for dx in $(/vendor/bin/grep -E 'SYS_BOOST' /proc/ppm/policy_status | awk -F'[][]' '{print $2}'); do
+            for dx in $(/vendor/bin/grep -E 'SYS_BOOST' /proc/ppm/policy_status | /system/bin/awk -F'[][]' '{print $2}'); do
                 zeshia "$dx 1" "/proc/ppm/policy_status"
             done
         fi
@@ -867,8 +867,8 @@ performance_profile() {
         AZLog "Clearing background apps..."
 
         # Get the list of running apps sorted by CPU usage (excluding system processes and the script itself)
-        app_list=$(top -n 1 -o %CPU | awk 'NR>7 {print $1}' | while read -r pid; do
-            pkg=$(cmd package list packages -U | awk -v pid="$pid" '$2 == pid {print $1}' | cut -d':' -f2)
+        app_list=$(top -n 1 -o %CPU | /system/bin/awk 'NR>7 {print $1}' | while read -r pid; do
+            pkg=$(cmd package list packages -U | /system/bin/awk -v pid="$pid" '$2 == pid {print $1}' | cut -d':' -f2)
             if [ -n "$pkg" ] && ! echo "$pkg" | /vendor/bin/grep -qE "com.android.systemui|com.android.settings|$(basename "$0")"; then
                 echo "$pkg"
             fi
@@ -953,11 +953,11 @@ mediatek_powersave() {
     # PPM Settings
     if [ -d /proc/ppm ]; then
         if [ -f /proc/ppm/policy_status ]; then
-            for idx in $(/vendor/bin/grep -E 'FORCE_LIMIT|PWR_THRO|THERMAL|USER_LIMIT' /proc/ppm/policy_status | awk -F'[][]' '{print $2}'); do
+            for idx in $(/vendor/bin/grep -E 'FORCE_LIMIT|PWR_THRO|THERMAL|USER_LIMIT' /proc/ppm/policy_status | /system/bin/awk -F'[][]' '{print $2}'); do
                 zeshia "$idx 1" "/proc/ppm/policy_status"
             done
 
-            for dx in $(/vendor/bin/grep -E 'SYS_BOOST' /proc/ppm/policy_status | awk -F'[][]' '{print $2}'); do
+            for dx in $(/vendor/bin/grep -E 'SYS_BOOST' /proc/ppm/policy_status | /system/bin/awk -F'[][]' '{print $2}'); do
                 zeshia "$dx 0" "/proc/ppm/policy_status"
             done
         fi

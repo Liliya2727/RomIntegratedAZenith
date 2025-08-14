@@ -87,7 +87,7 @@ bool get_screenstate_normal(void) {
     static char fetch_failed = 0;
 
     char* screenstate = execute_command("/system/bin/dumpsys power | /vendor/bin/grep -Eo 'mWakefulness=Awake|mWakefulness=Asleep' "
-                                        "| awk -F'=' '{print $2}'");
+                                        "| /system/bin/awk -F'=' '{print $2}'");
 
     if (screenstate) [[clang::likely]] {
         fetch_failed = 0;
@@ -125,7 +125,7 @@ bool get_low_power_state_normal(void) {
     if (!low_power) {
         low_power = execute_command("/system/bin/dumpsys power | /vendor/bin/grep -Eo "
                                     "'mSettingBatterySaverEnabled=true|mSettingBatterySaverEnabled=false' | "
-                                    "awk -F'=' '{print $2}'");
+                                    "/system/bin/awk -F'=' '{print $2}'");
     }
 
     if (low_power) [[clang::likely]] {
