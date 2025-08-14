@@ -53,7 +53,7 @@ zeshia() {
     fi
 
     # First write attempt
-    echo "$value" >"$path" 2>/dev/null
+    /system/bin/echo "$value" >"$path" 2>/dev/null
     local current
     current="$(cat "$path" 2>/dev/null)"
 
@@ -62,7 +62,7 @@ zeshia() {
     else
         # Retry once
         AZLog "Retrying write to '$path'"
-        echo "$value" >"$path" 2>/dev/null
+        /system/bin/echo "$value" >"$path" 2>/dev/null
         current="$(cat "$path" 2>/dev/null)"
 
         if [ "$current" = "$value" ]; then
@@ -87,12 +87,12 @@ zeshiax() {
         return
     fi
 
-    echo "$value" >"$path" 2>/dev/null
+    /system/bin/echo "$value" >"$path" 2>/dev/null
     local current
     current="$(cat "$path" 2>/dev/null)"
 
     if [ "$current" != "$value" ]; then
-        echo "$value" >"$path" 2>/dev/null
+        /system/bin/echo "$value" >"$path" 2>/dev/null
         # No further logging—silent retry
     fi
 }
@@ -228,7 +228,7 @@ qcom_cpudcvs_min_perf() {
 setgov() {
     AZLog "Setting CPU governor to '$1'"
 	chmod 644 /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor
-	echo "$1" | tee /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor >/dev/null
+	/system/bin/echo "$1" | tee /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor >/dev/null
 	chmod 444 /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor
 	chmod 444 /sys/devices/system/cpu/cpufreq/policy*/scaling_governor
 }
@@ -439,7 +439,7 @@ balanced_profile() {
         if [ -f "$DEFAULT_GOV_FILE" ]; then
             cat "$DEFAULT_GOV_FILE"
         else
-            echo "schedutil"
+            /system/bin/echo "schedutil"
         fi
     }
 
@@ -774,7 +774,7 @@ performance_profile() {
         if [ -f "$GAME_GOV_FILE" ]; then
             cat "$GAME_GOV_FILE"
         else
-            echo "schedutil"
+            /system/bin/echo "schedutil"
         fi
     }
     
@@ -782,7 +782,7 @@ performance_profile() {
     CPU="/sys/devices/system/cpu/cpu0/cpufreq"
     chmod 644 "$CPU/scaling_governor"
     default_gov=$(cat "$CPU/scaling_governor")
-    echo "$default_gov" >$DEFAULT_GOV_FILE
+    /system/bin/echo "$default_gov" >$DEFAULT_GOV_FILE
 
     # Load default cpu governor
     game_cpu_gov=$(load_game_governor)
@@ -869,8 +869,8 @@ performance_profile() {
         # Get the list of running apps sorted by CPU usage (excluding system processes and the script itself)
         app_list=$(top -n 1 -o %CPU | /system/bin/awk 'NR>7 {print $1}' | while read -r pid; do
             pkg=$(cmd package list packages -U | /system/bin/awk -v pid="$pid" '$2 == pid {print $1}' | cut -d':' -f2)
-            if [ -n "$pkg" ] && ! echo "$pkg" | /vendor/bin/grep -qE "com.android.systemui|com.android.settings|$(basename "$0")"; then
-                echo "$pkg"
+            if [ -n "$pkg" ] && ! /system/bin/echo "$pkg" | /vendor/bin/grep -qE "com.android.systemui|com.android.settings|$(basename "$0")"; then
+                /system/bin/echo "$pkg"
             fi
         done)
 
@@ -1115,7 +1115,7 @@ eco_mode() {
         if [ -f "$POWERSAVE_GOV_FILE" ]; then
             cat "$POWERSAVE_GOV_FILE"
         else
-            echo "powersave"
+            /system/bin/echo "powersave"
         fi
     }
     powersave_cpu_gov=$(load_powersave_governor)
@@ -1213,36 +1213,36 @@ initialize() {
     CPU="/sys/devices/system/cpu/cpu0/cpufreq"
     chmod 666 "$CPU/scaling_governor"
     default_gov=$(cat "$CPU/scaling_governor")
-    echo "$default_gov" > "$DEFAULT_GOV_FILE"
+    /system/bin/echo "$default_gov" > "$DEFAULT_GOV_FILE"
 
 # Apply Tweaks Based on Chipset
 chipset=$(/vendor/bin/grep -i 'hardware' /proc/cpuinfo | uniq | cut -d ':' -f2 | sed 's/^[ \t]*//')
 [ -z "$chipset" ] && chipset="$(getprop ro.board.platform) $(getprop ro.hardware)"
 
-case "$(echo "$chipset" | tr '[:upper:]' '[:lower:]')" in
+case "$(/system/bin/echo "$chipset" | tr '[:upper:]' '[:lower:]')" in
 *mt* | *MT*)
     soc="MediaTek"
-    echo 1 > "/sdcard/config/soctype"
+    /system/bin/echo 1 > "/sdcard/config/soctype"
     ;;
 *sm* | *qcom* | *SM* | *QCOM* | *Qualcomm* | *sdm* | *snapdragon*)
     soc="Snapdragon"
-    echo 2 > "/sdcard/config/soctype"
+    /system/bin/echo 2 > "/sdcard/config/soctype"
     ;;
 *exynos* | *Exynos* | *EXYNOS* | *universal* | *samsung* | *erd* | *s5e*)
     soc="Exynos"
-    echo 3 > "/sdcard/config/soctype"
+    /system/bin/echo 3 > "/sdcard/config/soctype"
     ;;
 *Unisoc* | *unisoc* | *ums*)
     soc="Unisoc"
-    echo 4 > "/sdcard/config/soctype"
+    /system/bin/echo 4 > "/sdcard/config/soctype"
     ;;
 *gs* | *Tensor* | *tensor*)
     soc="Tensor"
-    echo 5 > "/sdcard/config/soctype"
+    /system/bin/echo 5 > "/sdcard/config/soctype"
     ;;
 *)
     soc="Unknown"
-    echo 0 > "/sdcard/config/soctype"
+    /system/bin/echo 0 > "/sdcard/config/soctype"
     ;;
 esac
 
