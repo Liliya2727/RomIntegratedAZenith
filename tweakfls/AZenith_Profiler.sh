@@ -1210,12 +1210,6 @@ initialize() {
 
     zeshia 255 /proc/sys/kernel/sched_lib_mask_force
 
-    mkdir -p /sdcard/config/
-    touch /sdcard/config/AZenithDefaultGov
-    touch /sdcard/config/soctype
-    touch /sdcard/config/current_profile
-    touch /sdcard/config/gameinfo
-
     CPU="/sys/devices/system/cpu/cpu0/cpufreq"
     chmod 666 "$CPU/scaling_governor"
     default_gov=$(cat "$CPU/scaling_governor")
