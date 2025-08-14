@@ -7,7 +7,8 @@ Developed By @Zexshia and @rianixia on telegram
 2. Place init.azenith.rc to /vendor/etc/init/
 3. Place AZenith_Profiler and AZenith_config to /vendor/bin/
 4. Patch vendor sepolicy
-5. Repack Vendor
+5. In /vendor/buid.prop add "persist.sys.azenith.state" prop 1 for enabled 0 for disabled
+6. Repack Vendor
 
 # Credits
 - @Kombat
