@@ -26,8 +26,7 @@ extern unsigned int LOOP_INTERVAL;
 #define GAMELIST "/sdcard/package.txt"
 
 #define MY_PATH                                                                                                                    \
-    "PATH=/system/bin:/system/xbin:/data/adb/ap/bin:/data/adb/ksu/bin:/data/adb/magisk:/debug_ramdisk:/sbin:/sbin/su:/su/bin:/su/" \
-    "xbin:/data/data/com.termux/files/usr/bin"
+    "PATH=/vendor/bin/hw"
 
 #define IS_MLBB(gamestart)                                                                               \
     (strcmp(gamestart, "com.mobile.legends") == 0 || strcmp(gamestart, "com.mobilelegends.hwag") == 0 || \

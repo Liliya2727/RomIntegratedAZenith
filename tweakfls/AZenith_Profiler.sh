@@ -1187,27 +1187,27 @@ chipset=$(grep -i 'hardware' /proc/cpuinfo | uniq | cut -d ':' -f2 | sed 's/^[ \
 case "$(echo "$chipset" | tr '[:upper:]' '[:lower:]')" in
 *mt* | *MT*)
     soc="MediaTek"
-    echo 1 "/sdcard/config/soctype"
+    echo 1 > "/sdcard/config/soctype"
     ;;
 *sm* | *qcom* | *SM* | *QCOM* | *Qualcomm* | *sdm* | *snapdragon*)
     soc="Snapdragon"
-    echo 2 "/sdcard/config/soctype"
+    echo 2 > "/sdcard/config/soctype"
     ;;
 *exynos* | *Exynos* | *EXYNOS* | *universal* | *samsung* | *erd* | *s5e*)
     soc="Exynos"
-    echo 3 "/sdcard/config/soctype"
+    echo 3 > "/sdcard/config/soctype"
     ;;
 *Unisoc* | *unisoc* | *ums*)
     soc="Unisoc"
-    echo 4 "/sdcard/config/soctype"
+    echo 4 > "/sdcard/config/soctype"
     ;;
 *gs* | *Tensor* | *tensor*)
     soc="Tensor"
-    echo 5 "/sdcard/config/soctype"
+    echo 5 > "/sdcard/config/soctype"
     ;;
 *)
     soc="Unknown"
-    echo 0 "/sdcard/config/soctype"
+    echo 0 > "/sdcard/config/soctype"
     ;;
 esac
 

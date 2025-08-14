@@ -32,5 +32,3 @@
 (allow system_suspend mtk_hal_sensors (binder (transfer)))
 (allow init shell_data_file (file (append open)))
 (allow init sysfs_devices_system_cpu (file (write)))
-(allow init sysfs_backlight_file (file (read open getattr watch)))
-(allow init sysfs_backlight_file (dir (read open search)))
