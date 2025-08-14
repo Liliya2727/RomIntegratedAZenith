@@ -14,7 +14,7 @@ service AZenith_pre /vendor/bin/AZenith_config
     oneshot
     disabled
 
-# Exec service
-on property:sys.boot_completed=1
+# Exec service 
+on property:sys.boot_completed=1 && property:persist.sys.azenith.state=1
     start AZenith_pre
     start AZenith
