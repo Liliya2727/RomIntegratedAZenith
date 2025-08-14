@@ -5,9 +5,15 @@ Developed By @Zexshia and @rianixia on telegram
 # How to Add AZenith into my vendor?
 1. Place vendor.azenith-service binary to /vendor/bin/hw/
 2. Place init.azenith.rc to /vendor/etc/init/
-3. Place AZenith_Profiler to /vendor/bin/
+3. Place AZenith_Profiler and AZenith_config to /vendor/bin/
 4. Patch vendor sepolicy
-5. Repack Vendor
+5. In /vendor/buid.prop add "persist.sys.azenith.state" prop value 1 for enabled, and value 0 for disabled
+6. Repack Vendor
+
+# How add your app packages?
+1. Create the file gamelist.txt on /sdcard/gamelist.txt
+2. Add your package inside the file for example "com.mobile.legends" if you want more package add [ | ] in between the package for example "adventure.rpg.anime.game.vng.ys6|age.of.civilizations2.jakowski.lukasz|air.com.ace2three.mobile.cash|(and so on)"
+3. That's it! Enjoy
 
 # Credits
 - @Kombat

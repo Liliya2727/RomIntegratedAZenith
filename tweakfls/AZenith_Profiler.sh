@@ -1,4 +1,4 @@
-#!/system/bin/sh
+#!/vendor/bin/sh
 
 #
 # Copyright (C) 2024-2025 Zexshia
@@ -17,36 +17,69 @@
 #
 
 # shellcheck disable=SC2013
+# Add for debug prop
+DEBUG_LOG=$(getprop persist.sys.azenith-debug)
 
-MODDIR=${0%/*}
+AZLog() {
+    if [ "$DEBUG_LOG" = "true" ]; then
+        log -p i -t "AZenith" "$1"
+    fi
+}
+
+# fix dumpsys
+export PATH="/product/bin:/apex/com.android.runtime/bin:/apex/com.android.art/bin:/system_ext/bin:/system/bin:/system/xbin:/odm/bin:/vendor/bin:/vendor/xbin"
+AZLog "Runtime PATH was set to: $PATH"
+
 DEFAULT_GOV_FILE="/sdcard/config/AZenithDefaultGov"
 
 zeshia() {
     local value="$1"
     local path="$2"
+
+    # Func Called log
+    AZLog "Attempting to set '$path' to '$value'"
     if [ ! -e "$path" ]; then
-        return
-    fi
-    if [ ! -w "$path" ] && ! chmod 644 "$path" 2>/dev/null; then
-        return
+        return 1
     fi
 
-    echo "$value" >"$path" 2>/dev/null
+    # Ensure writable
+    if [ ! -w "$path" ]; then
+        if chmod 0666 "$path" 2>/dev/null; then
+            AZLog "Made '$path' writable"
+        else
+            AZLog "FAILED: Cannot make '$path' writable"
+            return 1
+        fi
+    fi
+
+    # First write attempt
+    /system/bin/echo "$value" >"$path" 2>/dev/null
     local current
     current="$(cat "$path" 2>/dev/null)"
 
-    if [ "$current" != "$value" ]; then
-        echo "$value" >"$path" 2>/dev/null
+    if [ "$current" = "$value" ]; then
+        AZLog "SUCCESS: '$path' set to '$current'"
+    else
+        # Retry once
+        AZLog "Retrying write to '$path'"
+        /system/bin/echo "$value" >"$path" 2>/dev/null
         current="$(cat "$path" 2>/dev/null)"
-        # No further logging—silent retry
-    fi
 
-    chmod 444 "$path" 2>/dev/null
+        if [ "$current" = "$value" ]; then
+            AZLog "SUCCESS on retry: '$path' set to '$current'"
+        else
+            AZLog "FAILED: Could not set '$path' to '$value' (current: '$current')"
+        fi
+    fi
 }
 
 zeshiax() {
     local value="$1"
     local path="$2"
+
+    # Log the action before attempting it
+    AZLog "Setting(x) '$path' to '$value'"
+
     if [ ! -e "$path" ]; then
         return
     fi
@@ -54,12 +87,12 @@ zeshiax() {
         return
     fi
 
-    echo "$value" >"$path" 2>/dev/null
+    /system/bin/echo "$value" >"$path" 2>/dev/null
     local current
     current="$(cat "$path" 2>/dev/null)"
 
     if [ "$current" != "$value" ]; then
-        echo "$value" >"$path" 2>/dev/null
+        /system/bin/echo "$value" >"$path" 2>/dev/null
         # No further logging—silent retry
     fi
 }
@@ -70,13 +103,13 @@ which_maxfreq() {
 }
 
 which_minfreq() {
-	tr ' ' '\n' <"$1" | grep -v '^[[:space:]]*$' | sort -n | head -n 1
+	tr ' ' '\n' <"$1" | /vendor/bin/grep -v '^[[:space:]]*$' | sort -n | head -n 1
 }
 
 which_midfreq() {
 	total_opp=$(wc -w <"$1")
 	mid_opp=$(((total_opp + 1) / 2))
-	tr ' ' '\n' <"$1" | grep -v '^[[:space:]]*$' | sort -nr | head -n $mid_opp | tail -n 1
+	tr ' ' '\n' <"$1" | /vendor/bin/grep -v '^[[:space:]]*$' | sort -nr | head -n $mid_opp | tail -n 1
 }
 cpufreq_ppm_max_perf() {
 	cluster=-1
@@ -193,8 +226,9 @@ qcom_cpudcvs_min_perf() {
 }
 
 setgov() {
+    AZLog "Setting CPU governor to '$1'"
 	chmod 644 /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor
-	echo "$1" | tee /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor >/dev/null
+	/system/bin/echo "$1" | tee /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor >/dev/null
 	chmod 444 /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor
 	chmod 444 /sys/devices/system/cpu/cpufreq/policy*/scaling_governor
 }
@@ -208,11 +242,11 @@ mediatek_balance() {
     # PPM Settings
     if [ -d /proc/ppm ]; then
         if [ -f /proc/ppm/policy_status ]; then
-            for idx in $(grep -E 'FORCE_LIMIT|PWR_THRO|THERMAL|USER_LIMIT' /proc/ppm/policy_status | awk -F'[][]' '{print $2}'); do
+            for idx in $(/vendor/bin/grep -E 'FORCE_LIMIT|PWR_THRO|THERMAL|USER_LIMIT' /proc/ppm/policy_status | /system/bin/awk -F'[][]' '{print $2}'); do
                 zeshia "$idx 1" "/proc/ppm/policy_status"
             done
 
-            for dx in $(grep -E 'SYS_BOOST' /proc/ppm/policy_status | awk -F'[][]' '{print $2}'); do
+            for dx in $(/vendor/bin/grep -E 'SYS_BOOST' /proc/ppm/policy_status | /system/bin/awk -F'[][]' '{print $2}'); do
                 zeshia "$dx 0" "/proc/ppm/policy_status"
             done
         fi
@@ -400,11 +434,12 @@ tensor_balance() {
 # # # # # # #  BALANCED PROFILES! # # # # # # #
 ###############################################
 balanced_profile() {
+    AZLog "Applying Balanced Profile..."
     load_default_governor() {
         if [ -f "$DEFAULT_GOV_FILE" ]; then
             cat "$DEFAULT_GOV_FILE"
         else
-            echo "schedutil"
+            /system/bin/echo "schedutil"
         fi
     }
 
@@ -492,7 +527,7 @@ balanced_profile() {
 
     #  Disable battery saver module
     [ -f /sys/module/battery_saver/parameters/enabled ] && {
-        if grep -qo '[0-9]\+' /sys/module/battery_saver/parameters/enabled; then
+        if /vendor/bin/grep -qo '[0-9]\+' /sys/module/battery_saver/parameters/enabled; then
             zeshia 0 /sys/module/battery_saver/parameters/enabled
         else
             zeshia N /sys/module/battery_saver/parameters/enabled
@@ -526,11 +561,11 @@ mediatek_performance() {
     # PPM Settings
     if [ -d /proc/ppm ]; then
         if [ -f /proc/ppm/policy_status ]; then
-            for idx in $(grep -E 'FORCE_LIMIT|PWR_THRO|THERMAL|USER_LIMIT' /proc/ppm/policy_status | awk -F'[][]' '{print $2}'); do
+            for idx in $(/vendor/bin/grep -E 'FORCE_LIMIT|PWR_THRO|THERMAL|USER_LIMIT' /proc/ppm/policy_status | /system/bin/awk -F'[][]' '{print $2}'); do
                 zeshia "$idx 0" "/proc/ppm/policy_status"
             done
 
-            for dx in $(grep -E 'SYS_BOOST' /proc/ppm/policy_status | awk -F'[][]' '{print $2}'); do
+            for dx in $(/vendor/bin/grep -E 'SYS_BOOST' /proc/ppm/policy_status | /system/bin/awk -F'[][]' '{print $2}'); do
                 zeshia "$dx 1" "/proc/ppm/policy_status"
             done
         fi
@@ -542,7 +577,7 @@ mediatek_performance() {
 
     # Max GPU Frequency
     if [ -d /proc/gpufreq ]; then
-        gpu_freq="$(cat /proc/gpufreq/gpufreq_opp_dump | grep -o 'freq = [0-9]*' | sed 's/freq = //' | sort -nr | head -n 1)"
+        gpu_freq="$(cat /proc/gpufreq/gpufreq_opp_dump | /vendor/bin/grep -o 'freq = [0-9]*' | sed 's/freq = //' | sort -nr | head -n 1)"
         zeshia "$gpu_freq" /proc/gpufreq/gpufreq_opp_freq
     elif [ -d /proc/gpufreqv2 ]; then
         zeshia 0 /proc/gpufreqv2/fix_target_opp_index
@@ -734,11 +769,12 @@ tensor_performance() {
 ###############################################
 
 performance_profile() {
+    AZLog "Applying Performance Profile..."
     load_game_governor() {
         if [ -f "$GAME_GOV_FILE" ]; then
             cat "$GAME_GOV_FILE"
         else
-            echo "schedutil"
+            /system/bin/echo "schedutil"
         fi
     }
     
@@ -746,7 +782,7 @@ performance_profile() {
     CPU="/sys/devices/system/cpu/cpu0/cpufreq"
     chmod 644 "$CPU/scaling_governor"
     default_gov=$(cat "$CPU/scaling_governor")
-    echo "$default_gov" >$DEFAULT_GOV_FILE
+    /system/bin/echo "$default_gov" >$DEFAULT_GOV_FILE
 
     # Load default cpu governor
     game_cpu_gov=$(load_game_governor)
@@ -831,10 +867,10 @@ performance_profile() {
         AZLog "Clearing background apps..."
 
         # Get the list of running apps sorted by CPU usage (excluding system processes and the script itself)
-        app_list=$(top -n 1 -o %CPU | awk 'NR>7 {print $1}' | while read -r pid; do
-            pkg=$(cmd package list packages -U | awk -v pid="$pid" '$2 == pid {print $1}' | cut -d':' -f2)
-            if [ -n "$pkg" ] && ! echo "$pkg" | grep -qE "com.android.systemui|com.android.settings|$(basename "$0")"; then
-                echo "$pkg"
+        app_list=$(top -n 1 -o %CPU | /system/bin/awk 'NR>7 {print $1}' | while read -r pid; do
+            pkg=$(cmd package list packages -U | /system/bin/awk -v pid="$pid" '$2 == pid {print $1}' | cut -d':' -f2)
+            if [ -n "$pkg" ] && ! /system/bin/echo "$pkg" | /vendor/bin/grep -qE "com.android.systemui|com.android.settings|$(basename "$0")"; then
+                /system/bin/echo "$pkg"
             fi
         done)
 
@@ -874,14 +910,14 @@ performance_profile() {
         am force-stop com.facebook.lite
         am kill-all
     }
-    if [ "$(cat /data/adb/.config/AZenith/clearbg)" -eq 1 ]; then
+    if [ "$(cat /sdcard/config/clearbg)" -eq 1 ]; then
         clear_background_apps
         AZLog "Clearing apps"
     fi
 
     # Disable battery saver module
     [ -f /sys/module/battery_saver/parameters/enabled ] && {
-        if grep -qo '[0-9]\+' /sys/module/battery_saver/parameters/enabled; then
+        if /vendor/bin/grep -qo '[0-9]\+' /sys/module/battery_saver/parameters/enabled; then
             zeshia 0 /sys/module/battery_saver/parameters/enabled
         else
             zeshia N /sys/module/battery_saver/parameters/enabled
@@ -897,7 +933,7 @@ performance_profile() {
         zeshia NO_TTWU_QUEUE /sys/kernel/debug/sched_features
     fi
 
-    if [ "$(cat /data/adb/.config/AZenith/bypass_charge)" -eq 1 ]; then
+    if [ "$(cat /sdcard/config/bypass_charge)" -eq 1 ]; then
         bypassCharge 1
     fi
 
@@ -917,11 +953,11 @@ mediatek_powersave() {
     # PPM Settings
     if [ -d /proc/ppm ]; then
         if [ -f /proc/ppm/policy_status ]; then
-            for idx in $(grep -E 'FORCE_LIMIT|PWR_THRO|THERMAL|USER_LIMIT' /proc/ppm/policy_status | awk -F'[][]' '{print $2}'); do
+            for idx in $(/vendor/bin/grep -E 'FORCE_LIMIT|PWR_THRO|THERMAL|USER_LIMIT' /proc/ppm/policy_status | /system/bin/awk -F'[][]' '{print $2}'); do
                 zeshia "$idx 1" "/proc/ppm/policy_status"
             done
 
-            for dx in $(grep -E 'SYS_BOOST' /proc/ppm/policy_status | awk -F'[][]' '{print $2}'); do
+            for dx in $(/vendor/bin/grep -E 'SYS_BOOST' /proc/ppm/policy_status | /system/bin/awk -F'[][]' '{print $2}'); do
                 zeshia "$dx 0" "/proc/ppm/policy_status"
             done
         fi
@@ -1073,12 +1109,13 @@ tensor_powersave() {
 ###############################################
 
 eco_mode() {
+    AZLog "Applying Eco (Powersave) Profile..."
     # Load Powersave Governor
     load_powersave_governor() {
         if [ -f "$POWERSAVE_GOV_FILE" ]; then
             cat "$POWERSAVE_GOV_FILE"
         else
-            echo "powersave"
+            /system/bin/echo "powersave"
         fi
     }
     powersave_cpu_gov=$(load_powersave_governor)
@@ -1094,7 +1131,7 @@ eco_mode() {
     done
 
     # Disable DND
-    if [ "$(cat /data/adb/.config/AZenith/dnd)" -eq 1 ]; then
+    if [ "$(cat /sdcard/config/dnd)" -eq 1 ]; then
         cmd notification set_dnd off && AZLog "DND disabled" || AZLog "Failed to disable DND"
     fi
 
@@ -1126,7 +1163,7 @@ eco_mode() {
 
     #  Enable battery saver module
     [ -f /sys/module/battery_saver/parameters/enabled ] && {
-        if grep -qo '[0-9]\+' /sys/module/battery_saver/parameters/enabled; then
+        if /vendor/bin/grep -qo '[0-9]\+' /sys/module/battery_saver/parameters/enabled; then
             zeshia 1 /sys/module/battery_saver/parameters/enabled
         else
             zeshia Y /sys/module/battery_saver/parameters/enabled
@@ -1154,7 +1191,7 @@ eco_mode() {
 ###############################################
 
 initialize() {
-
+    AZLog "Initializing AZenith..."
     # Disable all kernel panic mechanisms
     for param in hung_task_timeout_secs panic_on_oom panic_on_oops panic softlockup_panic; do
         zeshia "0" "/proc/sys/kernel/$param"
@@ -1173,41 +1210,39 @@ initialize() {
 
     zeshia 255 /proc/sys/kernel/sched_lib_mask_force
 
-    mkdir -p /sdcard/config/
-    touch /sdcard/config/AZenithDefaultGov
     CPU="/sys/devices/system/cpu/cpu0/cpufreq"
-    chmod 644 "$CPU/scaling_governor"
+    chmod 666 "$CPU/scaling_governor"
     default_gov=$(cat "$CPU/scaling_governor")
-    echo "$default_gov" > "$DEFAULT_GOV_FILE"
+    /system/bin/echo "$default_gov" > "$DEFAULT_GOV_FILE"
 
 # Apply Tweaks Based on Chipset
-chipset=$(grep -i 'hardware' /proc/cpuinfo | uniq | cut -d ':' -f2 | sed 's/^[ \t]*//')
+chipset=$(/vendor/bin/grep -i 'hardware' /proc/cpuinfo | uniq | cut -d ':' -f2 | sed 's/^[ \t]*//')
 [ -z "$chipset" ] && chipset="$(getprop ro.board.platform) $(getprop ro.hardware)"
 
-case "$(echo "$chipset" | tr '[:upper:]' '[:lower:]')" in
+case "$(/system/bin/echo "$chipset" | tr '[:upper:]' '[:lower:]')" in
 *mt* | *MT*)
     soc="MediaTek"
-    echo 1 > "/sdcard/config/soctype"
+    /system/bin/echo 1 > "/sdcard/config/soctype"
     ;;
 *sm* | *qcom* | *SM* | *QCOM* | *Qualcomm* | *sdm* | *snapdragon*)
     soc="Snapdragon"
-    echo 2 > "/sdcard/config/soctype"
+    /system/bin/echo 2 > "/sdcard/config/soctype"
     ;;
 *exynos* | *Exynos* | *EXYNOS* | *universal* | *samsung* | *erd* | *s5e*)
     soc="Exynos"
-    echo 3 > "/sdcard/config/soctype"
+    /system/bin/echo 3 > "/sdcard/config/soctype"
     ;;
 *Unisoc* | *unisoc* | *ums*)
     soc="Unisoc"
-    echo 4 > "/sdcard/config/soctype"
+    /system/bin/echo 4 > "/sdcard/config/soctype"
     ;;
 *gs* | *Tensor* | *tensor*)
     soc="Tensor"
-    echo 5 > "/sdcard/config/soctype"
+    /system/bin/echo 5 > "/sdcard/config/soctype"
     ;;
 *)
     soc="Unknown"
-    echo 0 > "/sdcard/config/soctype"
+    /system/bin/echo 0 > "/sdcard/config/soctype"
     ;;
 esac
 
@@ -1219,13 +1254,15 @@ esac
 ###############################################
 # # # # # # # MAIN FUNCTION! # # # # # # #
 ###############################################
-
+AZLog "AZenith script started with argument: $1"
 case "$1" in
 0) initialize ;;
 1) performance_profile ;;
 2) balanced_profile ;;
 3) eco_mode ;;
+*) AZLog "Invalid argument: $1" ;;
 esac
 $@
 wait
-exit 0
+AZLog "AZenith script finished."
+exit

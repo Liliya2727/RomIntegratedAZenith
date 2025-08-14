@@ -13,8 +13,27 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
+#include <string.h> // For strerror()
+#include <errno.h>  // For errno
 #include <AZenith.h>
+/* add path access for full path*/
+#include <stdlib.h>
+
+void setup_path(void) {
+    int result = setenv("PATH",
+        "/product/bin:/apex/com.android.runtime/bin:/apex/com.android.art/bin:"
+        "/system_ext/bin:/system/bin:/system/xbin:/odm/bin:/vendor/bin:/vendor/xbin",
+        1 /* overwrite existing value */
+    );
+
+    // Check the return value of setenv
+    if (result == 0) {
+        log_zenith(LOG_INFO, "PATH environment variable set successfully.");
+    } else {
+        // If it fails, log the specific error from the system
+        log_zenith(LOG_ERROR, "Failed to set PATH environment variable: %s", strerror(errno));
+    }
+}
 
 bool (*get_screenstate)(void) = get_screenstate_normal;
 bool (*get_low_power_state)(void) = get_low_power_state_normal;
@@ -52,7 +71,7 @@ void run_profiler(const int profile) {
  * Note               : Caller is responsible for freeing the returned string.
  ***********************************************************************************/
 char* get_gamestart(void) {
-    return execute_command("dumpsys window visible-apps | grep 'package=.* ' | grep -Eo -f %s", GAMELIST);
+    return execute_command("/system/bin/dumpsys window visible-apps | /vendor/bin/grep 'package=.* ' | /vendor/bin/grep -Eo -f %s", GAMELIST);
 }
 /***********************************************************************************
  * Function Name      : get_screenstate_normal
@@ -67,8 +86,8 @@ char* get_gamestart(void) {
 bool get_screenstate_normal(void) {
     static char fetch_failed = 0;
 
-    char* screenstate = execute_command("dumpsys power | grep -Eo 'mWakefulness=Awake|mWakefulness=Asleep' "
-                                        "| awk -F'=' '{print $2}'");
+    char* screenstate = execute_command("/system/bin/dumpsys power | /vendor/bin/grep -Eo 'mWakefulness=Awake|mWakefulness=Asleep' "
+                                        "| /system/bin/awk -F'=' '{print $2}'");
 
     if (screenstate) [[clang::likely]] {
         fetch_failed = 0;
@@ -104,9 +123,9 @@ bool get_low_power_state_normal(void) {
 
     char* low_power = execute_direct("/system/bin/settings", "settings", "get", "global", "low_power", NULL);
     if (!low_power) {
-        low_power = execute_command("dumpsys power | grep -Eo "
+        low_power = execute_command("/system/bin/dumpsys power | /vendor/bin/grep -Eo "
                                     "'mSettingBatterySaverEnabled=true|mSettingBatterySaverEnabled=false' | "
-                                    "awk -F'=' '{print $2}'");
+                                    "/system/bin/awk -F'=' '{print $2}'");
     }
 
     if (low_power) [[clang::likely]] {

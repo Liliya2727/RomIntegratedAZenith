@@ -1,11 +1,22 @@
-
+# Define Service
 service AZenith /vendor/bin/hw/vendor.azenith-service
     seclabel u:r:init:s0
+    class main
+    user root
+    group root mediadrm media_rw sdcard_rw media system sdcard_r
+    disabled
+
+service AZenith_prep /vendor/bin/AZenith_config
+    seclabel u:r:shell:s0
     class late_start
-    user system
-    group system
+    user root
+    group mediadrm media_rw sdcard_rw media system sdcard_r
     oneshot
     disabled
 
-on property:sys.boot_completed=1
+# Prep conf files and start service daemon
+on property:sys.boot_completed=1 && property:persist.sys.azenith.state=1
+    start AZenith_prep
+
+on property:sys.azenith.config=ready && property:persist.sys.azenith.state=1
     start AZenith
