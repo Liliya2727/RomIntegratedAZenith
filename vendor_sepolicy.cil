@@ -22,7 +22,6 @@
 (allow init sysfs_devices_system_cpu (file (create)))
 (allow init sysfs_dvfsrc_dbg (file (open write)))
 (allow init sysfs_dvfsrc_devfreq (file (open write)))
-(allow init untrusted_app (process (setsched signull)))
 (allow init fuse (file (read getattr))
 (allow init servicemanager (binder (call)))
 (allow init power_service (service_manager (find)))
@@ -67,3 +66,5 @@
 (allow toolbox sysfs_dvfsrc_dbg (file (open read)))
 (allow toolbox sysfs_dvfsrc_devfreq (dir (search)))
 (allow toolbox sysfs_dvfsrc_devfreq (file (getattr open read write)))
+(allow system_server vendor_default_prop (file (map)))
+(allow toolbox toolbox (capability (sys_admin)))
