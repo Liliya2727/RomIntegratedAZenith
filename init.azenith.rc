@@ -7,6 +7,5 @@ service AZenith /vendor/bin/hw/vendor.azenith-service
     oneshot
     disabled
 
-on post-fs-data
-    setprop debug.azenith_enabled 1
+on property:sys.boot_completed=1
     start AZenith
