@@ -18,6 +18,17 @@
 # export full path to ensure ts runs
 export PATH="/product/bin:/apex/com.android.runtime/bin:/apex/com.android.art/bin:/system_ext/bin:/system/bin:/system/xbin:/odm/bin:/vendor/bin:/vendor/xbin"
 
+# Wait until boot is completed and /sdcard exists
+while true; do
+    boot_completed=$(getprop sys.boot_completed)
+    
+    if [ "$boot_completed" = "1" ] && [ -d /sdcard ]; then
+        break
+    fi
+    
+    sleep 1
+done
+
 # Make dir and files before writing
 mkdir -p /sdcard/config/
 touch /sdcard/config/AZenithDefaultGov
@@ -25,8 +36,6 @@ touch /sdcard/config/soctype
 touch /sdcard/config/current_profile
 touch /sdcard/config/gameinfo
 touch /sdcard/config/clearbg
-touch /sdcard/config/bypass_charge
-touch /sdcard/config/dnd
 touch /sdcard/gamelist.txt
 
 # start azenith daemon
