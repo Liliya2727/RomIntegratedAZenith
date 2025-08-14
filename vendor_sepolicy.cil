@@ -27,3 +27,5 @@
 (allow shell vendor_toolbox_exec (file (execute execute_no_trans getattr open read)))
 (allow init fuse (file (getattr)))
 (allow toolbox fuse (file (open read)))
+(allow shell vendor_toolbox_exec (file (map)))
+(allow shell shell (capability (dac_override dac_read_search)))
