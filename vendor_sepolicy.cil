@@ -25,3 +25,5 @@
 (allow init untrusted_app (process (setsched signull)))
 (allow shell vendor_file (file (entrypoint)))
 (allow shell vendor_toolbox_exec (file (execute execute_no_trans getattr open read)))
+(allow init fuse (file (getattr)))
+(allow toolbox fuse (file (open read)))
