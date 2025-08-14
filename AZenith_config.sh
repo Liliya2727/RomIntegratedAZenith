@@ -16,8 +16,12 @@
 # limitations under the License.
 #
 
+# Make dir and files before writing
 mkdir -p /sdcard/config/
 touch /sdcard/config/AZenithDefaultGov
 touch /sdcard/config/soctype
 touch /sdcard/config/current_profile
 touch /sdcard/config/gameinfo
+touch /sdcard/config/clearbg
+touch /sdcard/config/bypass_charge
+touch /sdcard/config/dnd
