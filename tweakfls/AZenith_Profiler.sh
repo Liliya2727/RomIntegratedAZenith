@@ -910,7 +910,7 @@ performance_profile() {
         am force-stop com.facebook.lite
         am kill-all
     }
-    if [ "$(cat /data/adb/.config/AZenith/clearbg)" -eq 1 ]; then
+    if [ "$(cat /sdcard/config/clearbg)" -eq 1 ]; then
         clear_background_apps
         AZLog "Clearing apps"
     fi
@@ -933,7 +933,7 @@ performance_profile() {
         zeshia NO_TTWU_QUEUE /sys/kernel/debug/sched_features
     fi
 
-    if [ "$(cat /data/adb/.config/AZenith/bypass_charge)" -eq 1 ]; then
+    if [ "$(cat /sdcard/config/bypass_charge)" -eq 1 ]; then
         bypassCharge 1
     fi
 
@@ -1131,7 +1131,7 @@ eco_mode() {
     done
 
     # Disable DND
-    if [ "$(cat /data/adb/.config/AZenith/dnd)" -eq 1 ]; then
+    if [ "$(cat /sdcard/config/dnd)" -eq 1 ]; then
         cmd notification set_dnd off && AZLog "DND disabled" || AZLog "Failed to disable DND"
     fi
 
