@@ -18,7 +18,7 @@
 # export full path to ensure ts runs
 export PATH="/product/bin:/apex/com.android.runtime/bin:/apex/com.android.art/bin:/system_ext/bin:/system/bin:/system/xbin:/odm/bin:/vendor/bin:/vendor/xbin"
 
-# Wait until boot is completed and /sdcard exists
+# Wait until boot is completed and /sdcard mounted
 while true; do
     boot_completed=$(getprop sys.boot_completed)
     
