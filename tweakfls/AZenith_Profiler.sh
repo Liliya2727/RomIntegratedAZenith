@@ -17,7 +17,9 @@
 #
 
 # shellcheck disable=SC2013
-export PATH="/vendor/bin:/vendor/xbin:/system/bin:/system/xbin"
+
+# fix dumpsys
+export PATH="/product/bin:/apex/com.android.runtime/bin:/apex/com.android.art/bin:/system_ext/bin:/system/bin:/system/xbin:/odm/bin:/vendor/bin:/vendor/xbin"
 
 MODDIR=${0%/*}
 DEFAULT_GOV_FILE="/sdcard/config/AZenithDefaultGov"

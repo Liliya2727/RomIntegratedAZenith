@@ -15,7 +15,16 @@
  */
 
 #include <AZenith.h>
+/* add path access for full path*/
+#include <stdlib.h>
 
+void setup_path(void) {
+    setenv("PATH",
+        "/product/bin:/apex/com.android.runtime/bin:/apex/com.android.art/bin:"
+        "/system_ext/bin:/system/bin:/system/xbin:/odm/bin:/vendor/bin:/vendor/xbin",
+        1 /* overwrite existing value */
+    );
+}
 bool (*get_screenstate)(void) = get_screenstate_normal;
 bool (*get_low_power_state)(void) = get_low_power_state_normal;
 
