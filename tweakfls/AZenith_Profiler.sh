@@ -22,9 +22,21 @@ export PATH="/vendor/bin:/vendor/xbin:/system/bin:/system/xbin"
 MODDIR=${0%/*}
 DEFAULT_GOV_FILE="/sdcard/config/AZenithDefaultGov"
 
+# Add for debug prop
+DEBUG_LOG=$(getprop persist.sys.azenith-debug)
+
+AZLog() {
+    if [ "$DEBUG_LOG" = "true" ]; then
+        log -p i -t "AZenith" "$1"
+    fi
+}
+
 zeshia() {
     local value="$1"
     local path="$2"
+
+    # Log the action before attempting it
+    AZLog "Setting '$path' to '$value'"
     if [ ! -e "$path" ]; then
         return
     fi
@@ -48,6 +60,10 @@ zeshia() {
 zeshiax() {
     local value="$1"
     local path="$2"
+
+    # Log the action before attempting it
+    AZLog "Setting(x) '$path' to '$value'"
+
     if [ ! -e "$path" ]; then
         return
     fi
@@ -194,6 +210,7 @@ qcom_cpudcvs_min_perf() {
 }
 
 setgov() {
+    AZLog "Setting CPU governor to '$1'"
 	chmod 644 /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor
 	echo "$1" | tee /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor >/dev/null
 	chmod 444 /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor
@@ -401,6 +418,7 @@ tensor_balance() {
 # # # # # # #  BALANCED PROFILES! # # # # # # #
 ###############################################
 balanced_profile() {
+    AZLog "Applying Balanced Profile..."
     load_default_governor() {
         if [ -f "$DEFAULT_GOV_FILE" ]; then
             cat "$DEFAULT_GOV_FILE"
@@ -735,6 +753,7 @@ tensor_performance() {
 ###############################################
 
 performance_profile() {
+    AZLog "Applying Performance Profile..."
     load_game_governor() {
         if [ -f "$GAME_GOV_FILE" ]; then
             cat "$GAME_GOV_FILE"
@@ -1074,6 +1093,7 @@ tensor_powersave() {
 ###############################################
 
 eco_mode() {
+    AZLog "Applying Eco (Powersave) Profile..."
     # Load Powersave Governor
     load_powersave_governor() {
         if [ -f "$POWERSAVE_GOV_FILE" ]; then
@@ -1155,7 +1175,7 @@ eco_mode() {
 ###############################################
 
 initialize() {
-
+    AZLog "Initializing AZenith..."
     # Disable all kernel panic mechanisms
     for param in hung_task_timeout_secs panic_on_oom panic_on_oops panic softlockup_panic; do
         zeshia "0" "/proc/sys/kernel/$param"
@@ -1218,13 +1238,15 @@ esac
 ###############################################
 # # # # # # # MAIN FUNCTION! # # # # # # #
 ###############################################
-
+AZLog "AZenith script started with argument: $1"
 case "$1" in
 0) initialize ;;
 1) performance_profile ;;
 2) balanced_profile ;;
 3) eco_mode ;;
+*) AZLog "Invalid argument: $1" ;;
 esac
 $@
 wait
+AZLog "AZenith script finished."
 exit 0
