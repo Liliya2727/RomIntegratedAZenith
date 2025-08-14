@@ -98,6 +98,7 @@ MLBBState handle_mlbb(const char* gamestart);
 // Profiler
 extern bool (*get_screenstate)(void);
 extern bool (*get_low_power_state)(void);
+void setup_path(void);
 char* get_gamestart(void);
 bool get_screenstate_normal(void);
 bool get_low_power_state_normal(void);

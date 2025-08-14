@@ -30,33 +30,47 @@ AZLog() {
 export PATH="/product/bin:/apex/com.android.runtime/bin:/apex/com.android.art/bin:/system_ext/bin:/system/bin:/system/xbin:/odm/bin:/vendor/bin:/vendor/xbin"
 AZLog "Runtime PATH was set to: $PATH"
 
-MODDIR=${0%/*}
 DEFAULT_GOV_FILE="/sdcard/config/AZenithDefaultGov"
 
 zeshia() {
     local value="$1"
     local path="$2"
 
-    # Log the action before attempting it
-    AZLog "Setting '$path' to '$value'"
+    # Func Called log
+    AZLog "Attempting to set '$path' to '$value'"
     if [ ! -e "$path" ]; then
-        return
-    fi
-    if [ ! -w "$path" ] && ! chmod 644 "$path" 2>/dev/null; then
-        return
+        return 1
     fi
 
+    # Ensure writable
+    if [ ! -w "$path" ]; then
+        if chmod 0666 "$path" 2>/dev/null; then
+            AZLog "Made '$path' writable"
+        else
+            AZLog "FAILED: Cannot make '$path' writable"
+            return 1
+        fi
+    fi
+
+    # First write attempt
     echo "$value" >"$path" 2>/dev/null
     local current
     current="$(cat "$path" 2>/dev/null)"
 
-    if [ "$current" != "$value" ]; then
+    if [ "$current" = "$value" ]; then
+        AZLog "SUCCESS: '$path' set to '$current'"
+    else
+        # Retry once
+        AZLog "Retrying write to '$path'"
         echo "$value" >"$path" 2>/dev/null
         current="$(cat "$path" 2>/dev/null)"
-        # No further logging—silent retry
-    fi
 
-    chmod 444 "$path" 2>/dev/null
+        if [ "$current" = "$value" ]; then
+            AZLog "SUCCESS on retry: '$path' set to '$current'"
+        else
+            AZLog "FAILED: Could not set '$path' to '$value' (current: '$current')"
+        fi
+    fi
 }
 
 zeshiax() {
@@ -1196,8 +1210,14 @@ initialize() {
 
     zeshia 255 /proc/sys/kernel/sched_lib_mask_force
 
+    mkdir -p /sdcard/config/
+    touch /sdcard/config/AZenithDefaultGov
+    touch /sdcard/config/soctype
+    touch /sdcard/config/current_profile
+    touch /sdcard/config/gameinfo
+
     CPU="/sys/devices/system/cpu/cpu0/cpufreq"
-    chmod 644 "$CPU/scaling_governor"
+    chmod 666 "$CPU/scaling_governor"
     default_gov=$(cat "$CPU/scaling_governor")
     echo "$default_gov" > "$DEFAULT_GOV_FILE"
 
