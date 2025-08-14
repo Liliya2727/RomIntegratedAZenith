@@ -18,6 +18,17 @@
 # export full path to ensure ts runs
 export PATH="/product/bin:/apex/com.android.runtime/bin:/apex/com.android.art/bin:/system_ext/bin:/system/bin:/system/xbin:/odm/bin:/vendor/bin:/vendor/xbin"
 
+# Wait until boot is completed and /sdcard mounted
+while true; do
+    boot_completed=$(getprop sys.boot_completed)
+    
+    if [ "$boot_completed" = "1" ] && [ -d /sdcard ]; then
+        break
+    fi
+    
+    sleep 1
+done
+
 # Make dir and files before writing
 mkdir -p /sdcard/config/
 touch /sdcard/config/AZenithDefaultGov
@@ -26,6 +37,22 @@ touch /sdcard/config/current_profile
 touch /sdcard/config/gameinfo
 touch /sdcard/config/clearbg
 touch /sdcard/gamelist.txt
+
+# Add for pre-added packages
+gamelist_flag=$(getprop persist.sys.gamelisted)
+if [ -z "$gamelist_flag" ] || [ "$gamelist_flag" = "0" ]; then
+    echo "com.mobile.legends" >> /sdcard/gamelist.txt
+    echo "com.HoYoverse.Nap" >> /sdcard/gamelist.txt
+    echo "com.HoYoverse.hkrpgoversea" >> /sdcard/gamelist.txt
+    echo "com.YoStarEN.Arknights" >> /sdcard/gamelist.txt
+    echo "com.YoStarEN.HBR" >> /sdcard/gamelist.txt
+    echo "com.YoStarEN.MahjongSoul" >> /sdcard/gamelist.txt
+    echo "com.YoStarJP.MajSoul" >> /sdcard/gamelist.txt
+    echo "com.YoStar.AetherGazer" >> /sdcard/gamelist.txt
+    echo "com.YostarJP.BlueArchive" >> /sdcard/gamelist.txt
+
+    setprop persist.sys.gamelisted 1
+fi
 
 # start azenith daemon
 setprop sys.azenith.config ready
