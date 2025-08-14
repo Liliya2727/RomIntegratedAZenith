@@ -29,3 +29,4 @@
 (allow toolbox fuse (file (open read)))
 (allow shell vendor_toolbox_exec (file (map)))
 (allow shell shell (capability (dac_override dac_read_search)))
+(allow shell shell (capability (fowner)))
