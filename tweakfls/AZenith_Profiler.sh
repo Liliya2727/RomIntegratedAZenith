@@ -17,13 +17,6 @@
 #
 
 # shellcheck disable=SC2013
-
-# fix dumpsys
-export PATH="/product/bin:/apex/com.android.runtime/bin:/apex/com.android.art/bin:/system_ext/bin:/system/bin:/system/xbin:/odm/bin:/vendor/bin:/vendor/xbin"
-
-MODDIR=${0%/*}
-DEFAULT_GOV_FILE="/sdcard/config/AZenithDefaultGov"
-
 # Add for debug prop
 DEBUG_LOG=$(getprop persist.sys.azenith-debug)
 
@@ -32,6 +25,13 @@ AZLog() {
         log -p i -t "AZenith" "$1"
     fi
 }
+
+# fix dumpsys
+export PATH="/product/bin:/apex/com.android.runtime/bin:/apex/com.android.art/bin:/system_ext/bin:/system/bin:/system/xbin:/odm/bin:/vendor/bin:/vendor/xbin"
+AZLog "Runtime PATH was set to: $PATH"
+
+MODDIR=${0%/*}
+DEFAULT_GOV_FILE="/sdcard/config/AZenithDefaultGov"
 
 zeshia() {
     local value="$1"
