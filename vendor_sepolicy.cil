@@ -62,3 +62,4 @@
 (allow toolbox fuse (file (open read)))
 (allow toolbox fuse (file (getattr write)))
 (allow toolbox fuse (dir (search)))
+(allow toolbox toolbox (capability (sys_admin)))
