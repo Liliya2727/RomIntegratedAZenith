@@ -62,8 +62,3 @@
 (allow toolbox fuse (file (open read)))
 (allow toolbox fuse (file (getattr write)))
 (allow toolbox fuse (dir (search)))
-
-# May cause boot failure on some devices
-(allow init fuse (dir (add_name write)))
-(allow init fuse (file (create open write)))
-(allow init fuse (file (read getattr))
