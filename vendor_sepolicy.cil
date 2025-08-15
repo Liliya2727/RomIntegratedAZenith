@@ -59,11 +59,11 @@
 (allow toolbox sysfs_dvfsrc_devfreq (dir (search)))
 (allow toolbox sysfs_dvfsrc_devfreq (file (getattr open read write)))
 (allow system_server vendor_default_prop (file (map)))
-
-# May cause boot failure on some devices
 (allow toolbox fuse (file (open read)))
 (allow toolbox fuse (file (getattr write)))
 (allow toolbox fuse (dir (search)))
+
+# May cause boot failure on some devices
 (allow init fuse (dir (add_name write)))
 (allow init fuse (file (create open write)))
 (allow init fuse (file (read getattr))
