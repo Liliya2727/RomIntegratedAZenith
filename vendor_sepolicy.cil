@@ -34,8 +34,6 @@
 (allow shell vendor_toolbox_exec (file (map execute execute_no_trans getattr open read)))
 (allow shell shell (capability (dac_override dac_read_search)))
 (allow shell shell (capability (fowner)))
-(allow shell system_data_file (file (write open)))
-(allow shell vendor_shell_exec (file (entrypoint)))
 (allow system_server init (fifo_file (write)))
 (allow servicemanager init (binder (transfer)))
 (allow toolbox fuse (dir (search)))
@@ -67,4 +65,4 @@
 (allow toolbox sysfs_dvfsrc_devfreq (dir (search)))
 (allow toolbox sysfs_dvfsrc_devfreq (file (getattr open read write)))
 (allow system_server vendor_default_prop (file (map)))
-(allow toolbox toolbox (capability (sys_admin)))
+
