@@ -23,6 +23,43 @@ pid_t game_pid = 0;
 int main(int argc, char* argv[]) {
 
 
+
+    // Expose logging interface for other modules
+    char* base_name = basename(argv[0]);
+    if (strcmp(base_name, "sys.azenith-service_log") == 0) {
+        if (argc < 3) {
+            fprintf(stderr, "Usage: sys.azenith-service_log <TAG> <LEVEL> <MESSAGE>\n");
+            fprintf(stderr, "Levels: 0=DEBUG, 1=INFO, 2=WARN, 3=ERROR, 4=FATAL\n");
+            return EXIT_FAILURE;
+        }
+
+        // Parse log level
+        int level = atoi(argv[2]);
+        if (level < LOG_DEBUG || level > LOG_FATAL) {
+            fprintf(stderr, "Invalid log level. Use 0-4.\n");
+            return EXIT_FAILURE;
+        }
+
+        // Combine message arguments
+        size_t message_len = 0;
+        for (int i = 3; i < argc; i++) {
+            message_len += strlen(argv[i]) + 1;
+        }
+
+        char message[message_len];
+        message[0] = '\0';
+
+        for (int i = 3; i < argc; i++) {
+            strcat(message, argv[i]);
+            if (i < argc - 1)
+                strcat(message, " ");
+        }
+
+        external_log(level, argv[1], message);
+        return EXIT_SUCCESS;
+    }
+
+
     // Make sure only one instance is running
     if (check_running_state() == 1) {
         fprintf(stderr, "\033[31mERROR:\033[0m Another instance of Daemon is already running!\n");
