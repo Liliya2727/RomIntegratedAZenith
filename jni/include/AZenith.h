@@ -12,7 +12,6 @@
 #include <time.h>
 #include <unistd.h>
 
-#define LOOP_INTERVAL 15
 #define MAX_DATA_LENGTH 1024
 #define MAX_COMMAND_LENGTH 600
 #define MAX_OUTPUT_LENGTH 256
@@ -21,12 +20,9 @@
 #define NOTIFY_TITLE "AZenith"
 #define LOG_TAG "AZenith"
 
-#define PROFILE_MODE "/sdcard/config/current_profile"
-#define GAME_INFO "/sdcard/config/gameinfo"
 #define GAMELIST "/sdcard/gamelist.txt"
 #define LOOP_INTERVAL 15
-#define MY_PATH
-                                                                                            \
+#define MY_PATH                                                                      \
     "PATH=/vendor/bin/hw"
 
 #define IS_MLBB(gamestart)                                                                               \
