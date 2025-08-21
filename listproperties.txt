@@ -1,0 +1,15 @@
+// Toggle lock max freq in Perf Profile
+// Val 1 = ON , 0 = OFF
+persist.sys.azenithconf.cpulimit 
+
+// Toggle Mem Cleaner in Perf Profile
+// Val 1 = ON , 0 = OFF
+persist.sys.azenithconf.memkill
+
+// Toggle DND in Perf Profile
+// Val 1 = ON , 0 = OFF
+persist.sys.azenithconf.dndongaming
+
+// INFO 
+sys.azenith.gameinfo // Show Current game info // VAL <pkgname> <pid> <uid>
+sys.azenith.currentprofile // Current Profile // VAL 0/1/2/3
