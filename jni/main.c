@@ -20,7 +20,7 @@
 char* gamestart = NULL;
 pid_t game_pid = 0;
 
-int main(int argc, char* argv[]) {
+int main(void) {
 
 
     // Register signal handlers
