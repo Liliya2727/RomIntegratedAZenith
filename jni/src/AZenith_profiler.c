@@ -47,17 +47,19 @@ bool (*get_low_power_state)(void) = get_low_power_state_normal;
  * Returns            : None
  * Description        : Switch to specified performance profile.
  ***********************************************************************************/
+
 void run_profiler(const int profile) {
-
+    char gameinfo_prop[256];
     if (profile == 1) {
-        write2file(GAME_INFO, false, false, "%s %d %d\n", gamestart, game_pid, uidof(game_pid));
+        snprintf(gameinfo_prop, sizeof(gameinfo_prop), "%s %d %d", gamestart, game_pid, uidof(game_pid));
+        (void)systemv("setprop sys.azenith.gameinfo \"%s\"", gameinfo_prop);
     } else {
-        write2file(GAME_INFO, false, false, "NULL 0 0\n");
+        (void)system("setprop sys.azenith.gameinfo \"NULL 0 0\"");
     }
-
-    write2file(PROFILE_MODE, false, false, "%d\n", profile);
+    (void)systemv("setprop sys.azenith.currentprofile %d", profile);
     (void)systemv("/vendor/bin/AZenith_Profiler %d", profile);
 }
+
 
 /***********************************************************************************
  * Function Name      : get_gamestart
