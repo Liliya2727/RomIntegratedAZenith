@@ -28,6 +28,7 @@ cp LICENSE ./modules
 cp gamelist.txt ./modules
 cp README.md ./modules
 cp changelog.md ./modules
+cp listproperties.txt ./modules
 
 # Remove .sh extension from scripts
 find modules/bin -maxdepth 1 -type f -name "*.sh" -exec sh -c 'mv -- "$0" "${0%.sh}"' {} \;
