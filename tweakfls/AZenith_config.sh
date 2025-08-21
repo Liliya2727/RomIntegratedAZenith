@@ -1,7 +1,7 @@
 #!/vendor/bin/sh
 
 #
-# Copyright (C) 2024-2025 Zexshia
+# Copyright (C) 2024-2025 Rianixia
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -62,7 +62,7 @@ else
     exit 1
 fi
 
-for file in AZenithDefaultGov soctype current_profile gameinfo clearbg; do
+for file in AZenithDefaultGov; do
     if touch /sdcard/config/$file; then
         AZLog "File /sdcard/config/$file created."
     else
