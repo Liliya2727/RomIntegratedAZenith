@@ -53,24 +53,6 @@ while true; do
     sleep 1
 done
 
-# Make dir and files before writing
-AZLog "Creating /sdcard/config directory and default files..."
-if mkdir -p /sdcard/config/; then
-    AZLog "Directory /sdcard/config created successfully."
-else
-    AZError "Failed to create /sdcard/config directory!"
-    exit 1
-fi
-
-for file in AZenithDefaultGov; do
-    if touch /sdcard/config/$file; then
-        AZLog "File /sdcard/config/$file created."
-    else
-        AZError "Failed to create /sdcard/config/$file!"
-        exit 1
-    fi
-done
-
 if touch /sdcard/gamelist.txt; then
     AZLog "File /sdcard/gamelist.txt created."
 else
