@@ -21,7 +21,6 @@
 #define LOG_TAG "AZenith"
 
 #define GAMELIST "/sdcard/gamelist.txt"
-#define LOOP_INTERVAL 15
 #define MY_PATH                                                                      \
     "PATH=/vendor/bin/hw"
 
@@ -64,7 +63,7 @@ extern pid_t game_pid;
  * are in the wrong place.
  */
 
-static bool preload_active = false;
+extern unsigned int LOOP_INTERVAL;
 void sighandler(const int signal);
 char* trim_newline(char* string);
 char* timern(void);
@@ -77,10 +76,16 @@ char* execute_direct(const char* path, const char* arg0, ...);
 int systemv(const char* format, ...);
 
 // Utilities
+extern void GamePreload(const char* package);
+extern void preload(const char* pkg, unsigned int* LOOP_INTERVAL);
+extern void stop_preloading(unsigned int* LOOP_INTERVAL);
+extern void cleanup_vmt(void);
+void notify(const char* message);
+extern bool preload_active;
+extern bool did_log_preload;
 int write2file(const char* filename, const bool append, const bool use_flock, const char* data, ...);
 
 // system
-void log_preload(LogLevel level, const char* message, ...);
 void log_zenith(LogLevel level, const char* message, ...);
 
 // Utilities
