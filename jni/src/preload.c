@@ -38,7 +38,7 @@
  ***********************************************************************************/
 void GamePreload(const char* package) {
     if (!package || strlen(package) == 0) {
-        log_preload(LOG_WARN, "Package is null or empty");
+        
         return;
     }
 
@@ -48,7 +48,7 @@ void GamePreload(const char* package) {
     snprintf(cmd_apk, sizeof(cmd_apk), "cmd package path %s | head -n1 | cut -d: -f2", package);
     FILE* apk = popen(cmd_apk, "r");
     if (!apk || !fgets(apk_path, sizeof(apk_path), apk)) {
-        log_preload(LOG_WARN, "Failed to get apk path for %s", package);
+        
         if (apk)
             pclose(apk);
         return;
@@ -68,13 +68,13 @@ void GamePreload(const char* package) {
 
     FILE* processed = fopen(PROCESSED_FILE_LIST, "a+");
     if (!processed) {
-        log_preload(LOG_ERROR, "Cannot open processed file list");
+    
         return;
     }
 
     regex_t regex;
     if (regcomp(&regex, GAME_LIB, REG_EXTENDED | REG_NOSUB) != 0) {
-        log_preload(LOG_ERROR, "Regex compile failed");
+  
         fclose(processed);
         return;
     }
@@ -107,7 +107,7 @@ void GamePreload(const char* package) {
                     snprintf(preload_cmd, sizeof(preload_cmd), "/vendor/bin/vendor.azenith-preloadbin -dL \"%s\"", lib);
                     if (systemv(preload_cmd) == 0) {
                         fprintf(processed, "%s\n", lib);
-                        log_preload(LOG_INFO, "Preloaded native: %s", lib);
+                      
                     }
                 }
             }
@@ -120,7 +120,7 @@ void GamePreload(const char* package) {
     snprintf(split_cmd, sizeof(split_cmd), "ls %s/*.apk 2>/dev/null", apk_path);
     FILE* apk_list = popen(split_cmd, "r");
     if (!apk_list) {
-        log_preload(LOG_WARN, "Could not list split APKs");
+        
         regfree(&regex);
         fclose(processed);
         return;
@@ -150,7 +150,7 @@ void GamePreload(const char* package) {
                 char cmd[1024];
                 snprintf(cmd, sizeof(cmd), "unzip -p \"%s\" \"%s\" | /vendor/bin/vendor.azenith-preloadbin2 -dL -", apk_file, innerlib);
                 if (systemv(cmd) == 0) {
-                    log_preload(LOG_INFO, "Preloaded Game libs %s -> %s", apk_file, innerlib);
+                    
                 }
             }
         }
