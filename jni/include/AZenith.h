@@ -12,6 +12,15 @@
 #include <time.h>
 #include <unistd.h>
 
+#define GAME_LIB                                                                                                                    \
+    "libunity\\.so|libUE4\\.so|libframeestimation(VK|GL)\\.so|libflutter\\.so|libapp\\.so|libGGP\\.so|libGame\\.so|"                \
+    "libvirglrenderer\\.so|libvortekrenderer\\.so|libwinlator\\.so|libminecraftpe\\.so|libc\\+\\+_shared\\.so|libnative-mvd-"       \
+    "render\\.so|libMiHoYoMTRSDK\\.so|libil2cpp\\.so|libmoba\\.so|libResources\\.so|libyuanshen\\.so|libcri_(vip|ware)_unity\\.so|" \
+    "libgamemaster\\.so|LibPixUI_PXplugin\\.so|LibVkLayer_swapchain_rotate\\.so|libzstd\\.so|libPixUI_Unity\\.so"
+
+#define SEARCH_PATHS "/vendor/lib64/egl /vendor/lib64/hw"
+#define PROCESSED_FILE_LIST "/sdcard/processed_files.txt"
+
 #define MAX_DATA_LENGTH 1024
 #define MAX_COMMAND_LENGTH 600
 #define MAX_OUTPUT_LENGTH 256
