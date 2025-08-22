@@ -10,6 +10,9 @@ persist.sys.azenithconf.memkill
 // Val 1 = ON , 0 = OFF
 persist.sys.azenithconf.dndongaming
 
+// Save Default Gov Value
+persist.sys.azenith.defaultgov
+
 // INFO 
 sys.azenith.gameinfo // Show Current game info // VAL <pkgname> <pid> <uid>
 sys.azenith.currentprofile // Current Profile // VAL 0/1/2/3

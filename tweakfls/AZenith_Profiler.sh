@@ -19,7 +19,6 @@
 # shellcheck disable=SC2013
 # Add for debug prop
 DEBUG_LOG=$(getprop persist.sys.azenith-debug)
-DEFAULT_GOV_FILE="/sdcard/config/AZenithDefaultGov"
 AZLog() {
     if [ "$DEBUG_LOG" = "true" ]; then
         log -p i -t "AZenith" "$1"
@@ -132,16 +131,9 @@ sync
 # # # # # # #  BALANCED PROFILES! # # # # # # #
 ###############################################
 balanced_profile() {
-    load_default_governor() {
-        if [ -f "$DEFAULT_GOV_FILE" ]; then
-            cat "$DEFAULT_GOV_FILE"
-        else
-            /system/bin/echo "schedutil"
-        fi
-    }
 
     # Load default cpu governor
-    default_cpu_gov=$(load_default_governor)
+    default_cpu_gov=$(getprop persist.sys.azenith.defaultgov)
 
     # Power level settings
     for pl in /sys/devices/system/cpu/perf; do
@@ -303,22 +295,12 @@ balanced_profile() {
 
 performance_profile() {
     AZLog "Applying Performance Profile..."
-    load_game_governor() {
-        if [ -f "$GAME_GOV_FILE" ]; then
-            cat "$GAME_GOV_FILE"
-        else
-            /system/bin/echo "schedutil"
-        fi
-    }
-
+   
     # Save governor
     CPU="/sys/devices/system/cpu/cpu0/cpufreq"
     chmod 644 "$CPU/scaling_governor"
     default_gov=$(cat "$CPU/scaling_governor")
-    /system/bin/echo "$default_gov" >$DEFAULT_GOV_FILE
-
-    # Load default cpu governor
-    game_cpu_gov=$(load_game_governor)
+    setprop persist.sys.azenith.defaultgov "$default_gov"
 
     # Power level settings
     for pl in /sys/devices/system/cpu/perf; do
@@ -689,7 +671,7 @@ initialize() {
     CPU="/sys/devices/system/cpu/cpu0/cpufreq"
     chmod 666 "$CPU/scaling_governor"
     default_gov=$(cat "$CPU/scaling_governor")
-    /system/bin/echo "$default_gov" >"$DEFAULT_GOV_FILE"
+    setprop persist.sys.azenith.defaultgov "$default_gov"
 
    
     sync
