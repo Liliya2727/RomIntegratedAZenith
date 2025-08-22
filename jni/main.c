@@ -35,7 +35,7 @@ int main(void) {
     MLBBState mlbb_is_running = MLBB_NOT_RUNNING;
     ProfileMode cur_mode = PERFCOMMON;
     static bool did_notify_start = false;
-    
+
     log_zenith(LOG_INFO, "Daemon started as PID %d", getpid());
     cleanup_vmt();
     run_profiler(PERFCOMMON);
@@ -86,7 +86,7 @@ int main(void) {
             set_priority(game_pid);
             if (!did_log_preload) {
                 log_zenith(LOG_INFO, "Start Preloading game package %s", gamestart);
-                notify("Start Preloading game package %s", gamestart);
+                notify("Start Preloading game package");
                 did_log_preload = true;
             }
         } else if (get_low_power_state()) {
