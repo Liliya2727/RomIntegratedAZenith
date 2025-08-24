@@ -23,6 +23,7 @@ mkdir -p modules/init
 cp -r ./libs/arm64-v8a/vendor.azenith-service modules/bin/hw
 cp -r ./init.azenith.rc modules/init
 cp -r ./tweakfls/* modules/bin
+cp -r ./preloadbin/* modules/bin
 cp -r ./vendor_sepolicy.cil modules/
 cp LICENSE ./modules
 cp gamelist.txt ./modules

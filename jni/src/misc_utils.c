@@ -15,6 +15,7 @@
  */
 
 #include <AZenith.h>
+#include <sys/system_properties.h>
 
 /***********************************************************************************
  * Function Name      : trim_newline
@@ -32,6 +33,23 @@
         *end = '\0';
 
     return string;
+}
+
+/***********************************************************************************
+ * Function Name      : notify
+ * Inputs             : message (char *) - Message to display
+ * Returns            : None
+ * Description        : Push a notification.
+ ***********************************************************************************/
+void notify(const char* message) {
+    int exit = systemv("su -lp 2000 -c \"/system/bin/cmd notification post "
+                       "-t '%s' "
+                       "'AZenith' '%s'\" >/dev/null",
+                       NOTIFY_TITLE, message);
+
+    if (exit != 0) [[clang::unlikely]] {
+        log_zenith(LOG_ERROR, "Unable to post push notification, message: %s", message);
+    }
 }
 
 /***********************************************************************************
@@ -109,4 +127,60 @@ bool return_true(void) {
  ***********************************************************************************/
 bool return_false(void) {
     return false;
+}
+/***********************************************************************************
+ * Function Name      : cleanup
+ * Inputs             : None
+ * Returns            : None
+ * Description        : kill preload process
+ ***********************************************************************************/
+void cleanup_vmt(void) {
+    int pr1 = systemv("/system/bin/toybox pidof sys.azenith-preloadbin > /dev/null 2>&1");
+    int pr2 = systemv("/system/bin/toybox pidof sys.azenith-preloadbin2 > /dev/null 2>&1");
+    if (pr1 == 0 || pr2 == 0) {
+        log_zenith(LOG_INFO, "Killing restover preload processes");
+        systemv("pkill -9 -f sys.azenith-preloadbin");
+        systemv("pkill -9 -f sys.azenith-preloadbin2");
+    }
+}
+
+/***********************************************************************************
+ * Function Name      : preload
+ * Inputs             : gamepkg
+ * Returns            : None
+ * Description        : Run preloads on loop
+ ***********************************************************************************/
+void preload(const char* pkg, unsigned int* LOOP_INTERVAL) {
+    char val[PROP_VALUE_MAX] = {0};
+    if (__system_property_get("persist.sys.azenithconf.gpreload", val) > 0) {
+        if (val[0] == '1') {
+            pid_t pid = fork();
+            if (pid == 0) {
+                GamePreload(pkg);
+                _exit(0);
+            } else if (pid > 0) {
+                *LOOP_INTERVAL = 35;
+                did_log_preload = false;
+                preload_active = true;
+            } else {
+                log_zenith(LOG_ERROR, "Failed to fork process for GamePreload");
+            }
+        }
+    }
+}
+
+/***********************************************************************************
+ * Function Name      : stop preload
+ * Inputs             : none
+ * Returns            : None
+ * Description        : stop if preload is running
+ ***********************************************************************************/
+void stop_preloading(unsigned int* LOOP_INTERVAL) {
+    if (preload_active) {
+        cleanup_vmt();
+        notify("Preload Stopped");
+        *LOOP_INTERVAL = 15;
+        did_log_preload = true;
+        preload_active = false;
+    }
 }
