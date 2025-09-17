@@ -23,6 +23,7 @@ mkdir -p modules/init
 cp -r ./libs/arm64-v8a/vendor.azenith-service modules/bin/hw
 cp -r ./init.azenith.rc modules/init
 cp -r ./tweakfls/* modules/bin
+cp -r ./preloadbin/* modules/bin
 cp -r ./vendor_sepolicy.cil modules/
 cp LICENSE ./modules
 cp gamelist.txt ./modules
@@ -34,7 +35,7 @@ cp listproperties.txt ./modules
 find modules/bin -maxdepth 1 -type f -name "*.sh" -exec sh -c 'mv -- "$0" "${0%.sh}"' {} \;
 
 # Parse version info to module prop
-zipName="AZenithRomINT-v$version-$release_code"
+zipName="AZenithRomINT-v$version-$release_code.zip"
 echo "zipName=$zipName" >>"$GITHUB_OUTPUT"
 
 # Zip the file

@@ -10,6 +10,10 @@ persist.sys.azenithconf.memkill
 // Val 1 = ON , 0 = OFF
 persist.sys.azenithconf.dndongaming
 
+// Toggle GamePreload in Perf Profile
+// Val 1 = ON , 0 = OFF
+persist.sys.azenithconf.gpreload
+
 // Save Default Gov Value
 persist.sys.azenith.defaultgov
 

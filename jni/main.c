@@ -16,8 +16,10 @@
 
 #include <AZenith.h>
 #include <libgen.h>
-
+unsigned int LOOP_INTERVAL = 15;
 char* gamestart = NULL;
+bool preload_active = false;
+bool did_log_preload = true;
 pid_t game_pid = 0;
 
 int main(void) {
@@ -32,8 +34,11 @@ int main(void) {
     bool need_profile_checkup = false;
     MLBBState mlbb_is_running = MLBB_NOT_RUNNING;
     ProfileMode cur_mode = PERFCOMMON;
+    static bool did_notify_start = false;
+
     log_zenith(LOG_INFO, "Daemon started as PID %d", getpid());
-    run_profiler(PERFCOMMON); // exec perfcommon
+    cleanup_vmt();
+    run_profiler(PERFCOMMON);
 
     while (1) {
         sleep(LOOP_INTERVAL);
@@ -45,6 +50,7 @@ int main(void) {
             gamestart = get_gamestart();
         } else if (game_pid != 0 && kill(game_pid, 0) == -1) [[clang::unlikely]] {
             log_zenith(LOG_INFO, "Game %s exited, resetting profile...", gamestart);
+            stop_preloading(&LOOP_INTERVAL);
             game_pid = 0;
             free(gamestart);
             gamestart = get_gamestart();
@@ -57,6 +63,8 @@ int main(void) {
             mlbb_is_running = handle_mlbb(gamestart);
 
         if (gamestart && get_screenstate() && mlbb_is_running != MLBB_RUN_BG) {
+            // Preload assets for the game
+            preload(gamestart, &LOOP_INTERVAL);
             // Bail out if we already on performance profile
             if (!need_profile_checkup && cur_mode == PERFORMANCE_PROFILE)
                 continue;
@@ -76,6 +84,11 @@ int main(void) {
             log_zenith(LOG_INFO, "Applying performance profile for %s", gamestart);
             run_profiler(PERFORMANCE_PROFILE);
             set_priority(game_pid);
+            if (!did_log_preload) {
+                log_zenith(LOG_INFO, "Start Preloading game package %s", gamestart);
+                notify("Start Preloading game package");
+                did_log_preload = true;
+            }
         } else if (get_low_power_state()) {
             // Bail out if we already on powersave profile
             if (cur_mode == ECO_MODE)
@@ -93,6 +106,10 @@ int main(void) {
             cur_mode = BALANCED_PROFILE;
             need_profile_checkup = false;
             log_zenith(LOG_INFO, "Applying Balanced profile");
+            if (!did_notify_start) {
+                notify("AZenith is running successfully");
+                did_notify_start = true;
+            }
             run_profiler(BALANCED_PROFILE);
         }
     }
