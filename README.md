@@ -1,4 +1,4 @@
-# AZenith for Developers
+# AZenith NightlyBuilds for Developers (Tests Builds)
 Introducing Rom Integrated AZenith for developers/Rom Maintainer,
 Developed By @Zexshia and @rianixia on telegram
 
