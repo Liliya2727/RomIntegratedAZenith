@@ -60,23 +60,57 @@ else
     exit 1
 fi
 
-# Add for pre-added packages (only if not already set)
+# Add all prelisted games
 gamelist_flag=$(getprop persist.sys.gamelisted)
 AZLog "Current gamelist flag: $gamelist_flag"
-
 if [ -z "$gamelist_flag" ] || [ "$gamelist_flag" = "0" ]; then
     AZLog "Writing default game list..."
-    {
-        echo "com.mobile.legends"
-        echo "com.HoYoverse.Nap"
-        echo "com.HoYoverse.hkrpgoversea"
-        echo "com.YoStarEN.Arknights"
-        echo "com.YoStarEN.HBR"
-        echo "com.YoStarEN.MahjongSoul"
-        echo "com.YoStarJP.MajSoul"
-        echo "com.YoStar.AetherGazer"
-        echo "com.YostarJP.BlueArchive"
-    } > /sdcard/gamelist.txt
+    cat <<EOF > /sdcard/gamelist.txt
+com.proximabeta.mf.uamo
+com.dts.freefiremax
+com.dts.freefireth
+com.levelinfinite.sgameGlobal
+com.tencent.KiHan
+com.tencent.tmgp.cf
+com.tencent.tmgp.cod
+com.tencent.tmgp.gnyx
+com.delta.force.hawk.ops
+com.garena.game.df
+com.levelinfinite.hotta.gp
+com.supercell.clashofclans
+com.mobile.legends
+com.vng.mlbbvn
+com.tencent.tmgp.sgame
+com.YoStar.AetherGazer
+com.netease.lztgglobal
+com.riotgames.league.wildrift
+com.riotgames.league.wildrifttw
+com.riotgames.league.wildriftvn
+com.epicgames.fortnite
+com.epicgames.portal
+com.tencent.lolm
+jp.konami.pesam
+com.cygames.umaumusume
+com.ea.gp.fifamobile
+com.pearlabyss.blackdesertm.gl
+com.pearlabyss.blackdesertm
+com.activision.callofduty.shooter
+com.gameloft.android.ANMP.GloftA9HM
+com.madfingergames.legends
+com.riotgames.league.teamfighttactics
+com.riotgames.league.teamfighttacticstw
+com.riotgames.league.teamfighttacticsvn
+com.pubg.imobile
+com.pubg.krmobile
+com.rekoo.pubgm
+com.tencent.tmgp.pubgmhd
+com.vng.pubgmobile
+com.tencent.ig
+com.garena.game.codm
+com.tencent.tmgp.kr.codm
+com.vng.codmvn
+com.miraclegames.farlight84
+EOF
 
     if [ $? -eq 0 ]; then
         AZLog "Default gamelist written successfully."
