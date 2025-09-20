@@ -168,32 +168,32 @@ apply_game_freqs() {
 			cpu_maxfreq=$(cat "$path/cpuinfo_max_freq")
 			cpu_minfreq=$(cat "$path/cpuinfo_max_freq")
 			[ "$(getprop persist.sys.azenithconf.cpulimit)" -eq 1 ] && {
-				new_maxtarget=$((cpu_maxfreq * 90 / 100))
-				new_midtarget=$((cpu_maxfreq * 50 / 100))
+				new_maxtarget=$((cpu_maxfreq * 80 / 100))
+				new_midtarget=$((cpu_maxfreq * 40 / 100))
 				new_midfreq=$(setfreq "$path/scaling_available_frequencies" "$new_midtarget")
 				new_maxfreq=$(setfreq "$path/scaling_available_frequencies" "$new_maxtarget")
-				zeshiax "$cluster $new_maxfreq" "/proc/ppm/policy/hard_userlimit_max_cpu_freq"
-				zeshiax "$cluster $new_midfreq" "/proc/ppm/policy/hard_userlimit_min_cpu_freq"
+				zeshia "$cluster $new_maxfreq" "/proc/ppm/policy/hard_userlimit_max_cpu_freq"
+				zeshia "$cluster $new_midfreq" "/proc/ppm/policy/hard_userlimit_min_cpu_freq"
 				continue
 			}
-			zeshiax "$cluster $cpu_maxfreq" "/proc/ppm/policy/hard_userlimit_max_cpu_freq"
-			zeshiax "$cluster $cpu_minfreq" "/proc/ppm/policy/hard_userlimit_min_cpu_freq"
+			zeshia "$cluster $cpu_maxfreq" "/proc/ppm/policy/hard_userlimit_max_cpu_freq"
+			zeshia "$cluster $cpu_minfreq" "/proc/ppm/policy/hard_userlimit_min_cpu_freq"
 		done
 	fi
 	for path in /sys/devices/system/cpu/*/cpufreq; do
 		cpu_maxfreq=$(cat "$path/cpuinfo_max_freq")
 		cpu_minfreq=$(cat "$path/cpuinfo_max_freq")
 		[ "$(getprop persist.sys.azenithconf.cpulimit)" -eq 1 ] && {
-			new_maxtarget=$((cpu_maxfreq * 90 / 100))
-			new_midtarget=$((cpu_maxfreq * 50 / 100))
+			new_maxtarget=$((cpu_maxfreq * 80 / 100))
+			new_midtarget=$((cpu_maxfreq * 40 / 100))
 			new_midfreq=$(setfreq "$path/scaling_available_frequencies" "$new_midtarget")
 			new_maxfreq=$(setfreq "$path/scaling_available_frequencies" "$new_maxtarget")
-			zeshiax "$new_maxfreq" "$path/scaling_max_freq"
-			zeshiax "$new_midfreq" "$path/scaling_min_freq"
+			zeshia "$new_maxfreq" "$path/scaling_max_freq"
+			zeshia "$new_midfreq" "$path/scaling_min_freq"
 			continue
 		}
-		zeshiax "$cpu_maxfreq" "$path/scaling_max_freq"
-		zeshiax "$cpu_minfreq" "$path/scaling_min_freq"
+		zeshia "$cpu_maxfreq" "$path/scaling_max_freq"
+		zeshia "$cpu_minfreq" "$path/scaling_min_freq"
 		chmod -f 644 /sys/devices/system/cpu/cpufreq/policy*/scaling_*_freq
 	done
 }
