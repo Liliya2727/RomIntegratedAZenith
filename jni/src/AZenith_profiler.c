@@ -52,12 +52,12 @@ void run_profiler(const int profile) {
     char gameinfo_prop[256];
     if (profile == 1) {
         snprintf(gameinfo_prop, sizeof(gameinfo_prop), "%s %d %d", gamestart, game_pid, uidof(game_pid));
-        (void)systemv("setprop sys.azenith.gameinfo \"%s\"", gameinfo_prop);
+        systemv("setprop sys.azenith.gameinfo \"%s\"", gameinfo_prop);
     } else {
-        (void)system("setprop sys.azenith.gameinfo \"NULL 0 0\"");
+        systemv("setprop sys.azenith.gameinfo \"NULL 0 0\"");
     }
-    (void)systemv("setprop sys.azenith.currentprofile %d", profile);
-    (void)systemv("/vendor/bin/AZenith_Profiler %d", profile);
+    systemv("setprop sys.azenith.currentprofile %d", profile);
+    systemv("/vendor/bin/AZenith_Profiler %d", profile);
 }
 
 
