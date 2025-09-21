@@ -1,0 +1,420 @@
+# AZenith Service SELinux Policy Patch
+
+This document describes how to define SELinux types, contexts, and permissions for the **AZenith service** and its helper scripts. The goal is to integrate the service into the Android SELinux policy while ensuring the correct security boundaries.
+
+---
+
+## 1. Type and Attribute Definitions
+
+We need to define new **types** and **attributes** for:
+
+* The **AZenith service process**
+* Its **executable file**
+* The **system properties** it manages
+
+These definitions belong in:
+
+```
+/vendor/etc/selinux/vendor_sepolicy.cil
+```
+
+### Attribute Declarations
+
+* `azenith_service` → added to the `domain` attribute
+* `azenith_prop` → added to the `property` attribute
+
+**Example:**
+
+```cil
+(typeattribute domain (azenith_service adbd_31 ...))
+(typeattribute property_type (azenith_prop system_prop ...))
+```
+
+### Type Definitions
+
+At the bottom of the file (with other type declarations), add:
+
+```cil
+(type azenith_service)
+(roletype object_r azenith_service)
+
+(type azenith_service_exec)
+(roletype object_r azenith_service_exec)
+
+(type azenith_prop)
+```
+
+### Permissions and Transitions
+
+Allow the `init` process to interact with the property and execute the service:
+
+```cil
+(allow init azenith_prop (file (relabelto write read getattr map open)))
+(allow azenith_prop tmpfs (filesystem (associate)))
+(typetransition init azenith_service_exec process azenith_service)
+```
+
+---
+
+## 2. File and Property Contexts
+
+Define the file contexts in:
+
+```
+/vendor/etc/selinux/vendor_file_context
+```
+
+```text
+/vendor/bin/hw/vendor.azenith-service    u:object_r:azenith_service_exec:s0
+/vendor/bin/AZenith_Profiler             u:object_r:vendor_shell_exec:s0
+/vendor/bin/AZenith_config               u:object_r:vendor_shell_exec:s0
+```
+
+Define the property contexts in:
+
+```
+/vendor/etc/selinux/vendor_property_context
+```
+
+```text
+sys.azenith.            u:object_r:azenith_prop:s0
+persist.sys.azenith.    u:object_r:azenith_prop:s0
+```
+
+---
+
+## 3. Possible Denials (DIY)
+
+# Do denials yourself!!
+Example denials might include:
+
+* Attempts by `azenith_service` to access `sysfs` or `procfs`
+* Property service access restrictions
+
+Keep iterating until all legitimate functionality works without `avc: denied` spam.
+```
+Example found denials on Transsion Device other device adjust accordingly or use your own
+(allow bluetooth azenith_prop (file (read)))
+(allow dumpstate azenith_prop (file (getattr map open read)))
+(allow gmscore_app azenith_prop (file (read)))
+(allow init azenith_prop (property_service (set)))
+(allow mediaprovider azenith_prop (file (read)))
+(allow mediaprovider_app azenith_prop (file (read)))
+(allow network_stack azenith_prop (file (read)))
+(allow nfc azenith_prop (file (read)))
+(allow odrefresh azenith_prop (file (getattr map open read)))
+(allow permissioncontroller_app azenith_prop (file (read)))
+(allow platform_app azenith_prop (file (read)))
+(allow priv_app azenith_prop (file (read)))
+(allow radio azenith_prop (file (getattr map open read)))
+(allow secure_element azenith_prop (file (read)))
+(allow shared_relro azenith_prop (file (read)))
+(allow system_app azenith_prop (file (read)))
+(allow system_server azenith_prop (file (read)))
+(allow system_server_startup azenith_prop (file (read)))
+(allow traceur_app azenith_prop (file (read)))
+(allow tranfac_app azenith_prop (file (read)))
+(allow untrusted_app azenith_prop (file (getattr map open read)))
+(allow vendor_init azenith_prop (file (read)))
+(allow vendor_init azenith_prop (property_service (set)))
+(allow webview_zygote azenith_prop (file (read)))
+(allow azenith_service aee_aedv (dir (search)))
+(allow azenith_service aee_aedv (file (open read)))
+(allow azenith_service apexd (dir (search)))
+(allow azenith_service apexd (file (open read)))
+(allow azenith_service audio_vendor_parameter_parser (dir (search)))
+(allow azenith_service audio_vendor_parameter_parser (file (open read)))
+(allow azenith_service audioserver (dir (search)))
+(allow azenith_service audioserver (file (open read)))
+(allow azenith_service azenith_prop (property_service (set)))
+(allow azenith_service azenith_service (capability (sys_ptrace)))
+(allow azenith_service azenith_service_exec (file (entrypoint execute getattr map read)))
+(allow azenith_service batterywarning (dir (search)))
+(allow azenith_service batterywarning (file (open read)))
+(allow azenith_service bluetooth (dir (search)))
+(allow azenith_service bluetooth (file (open read)))
+(allow azenith_service cameraserver (dir (search)))
+(allow azenith_service cameraserver (file (open read)))
+(allow azenith_service ccci_mdinit (dir (search)))
+(allow azenith_service ccci_mdinit (file (open read)))
+(allow azenith_service ccci_rpcd (dir (search)))
+(allow azenith_service ccci_rpcd (file (open read)))
+(allow azenith_service chg_sence (dir (search)))
+(allow azenith_service chg_sence (file (open read)))
+(allow azenith_service connsyslogger (dir (search)))
+(allow azenith_service connsyslogger (file (open read)))
+(allow azenith_service crash_dump (dir (search)))
+(allow azenith_service crash_dump (file (open read)))
+(allow azenith_service credstore (dir (search)))
+(allow azenith_service credstore (file (open read)))
+(allow azenith_service drmserver (dir (search)))
+(allow azenith_service drmserver (file (open read)))
+(allow azenith_service emdlogger (dir (search)))
+(allow azenith_service emdlogger (file (open read)))
+(allow azenith_service fpsgo_native (dir (search)))
+(allow azenith_service fpsgo_native (file (open read)))
+(allow azenith_service fuelgauged (dir (search)))
+(allow azenith_service fuelgauged (file (open read)))
+(allow azenith_service gatekeeperd (dir (search)))
+(allow azenith_service gatekeeperd (file (open read)))
+(allow azenith_service gbe_native (dir (search)))
+(allow azenith_service gbe_native (file (open read)))
+(allow azenith_service getgameserver (dir (search)))
+(allow azenith_service getgameserver (file (open read)))
+(allow azenith_service gmscore_app (dir (search)))
+(allow azenith_service gmscore_app (file (open read)))
+(allow azenith_service gpuservice (dir (search)))
+(allow azenith_service gpuservice (file (open read)))
+(allow azenith_service gsm0710muxd (dir (search)))
+(allow azenith_service gsm0710muxd (file (open read)))
+(allow azenith_service hal_allocator_default (dir (search)))
+(allow azenith_service hal_allocator_default (file (open read)))
+(allow azenith_service hal_bootctl_default (dir (search)))
+(allow azenith_service hal_bootctl_default (file (open read)))
+(allow azenith_service hal_deviceauthen (dir (search)))
+(allow azenith_service hal_deviceauthen (file (open read)))
+(allow azenith_service hal_dms_default (dir (search)))
+(allow azenith_service hal_dms_default (file (open read)))
+(allow azenith_service hal_drm_clearkey (dir (search)))
+(allow azenith_service hal_drm_clearkey (file (open read)))
+(allow azenith_service hal_drm_widevine (dir (search)))
+(allow azenith_service hal_drm_widevine (file (open read)))
+(allow azenith_service hal_face_default (dir (search)))
+(allow azenith_service hal_face_default (file (open read)))
+(allow azenith_service hal_fingerprint_default (dir (search)))
+(allow azenith_service hal_fingerprint_default (file (open read)))
+(allow azenith_service hal_gatekeeper_default (dir (search)))
+(allow azenith_service hal_gatekeeper_default (file (open read)))
+(allow azenith_service hal_graphics_allocator_default (dir (search)))
+(allow azenith_service hal_graphics_allocator_default (file (open read)))
+(allow azenith_service hal_graphics_composer_default (dir (search)))
+(allow azenith_service hal_graphics_composer_default (file (open read)))
+(allow azenith_service hal_health_default (dir (search)))
+(allow azenith_service hal_health_default (file (open read)))
+(allow azenith_service hal_keymaster_default (dir (search)))
+(allow azenith_service hal_keymaster_default (file (open read)))
+(allow azenith_service hal_nfc_default (dir (search)))
+(allow azenith_service hal_nfc_default (file (open read)))
+(allow azenith_service hal_paytrigger (dir (search)))
+(allow azenith_service hal_paytrigger (file (open read)))
+(allow azenith_service hal_tee_default (dir (search)))
+(allow azenith_service hal_tee_default (file (open read)))
+(allow azenith_service hal_thermal_default (dir (search)))
+(allow azenith_service hal_thermal_default (file (open read)))
+(allow azenith_service hal_trancriticalparavfy (dir (search)))
+(allow azenith_service hal_trancriticalparavfy (file (open read)))
+(allow azenith_service hal_tranfac_default (dir (search)))
+(allow azenith_service hal_tranfac_default (file (open read)))
+(allow azenith_service hal_vibrator_default (dir (search)))
+(allow azenith_service hal_vibrator_default (file (open read)))
+(allow azenith_service hal_wifi_default (dir (search)))
+(allow azenith_service hal_wifi_default (file (open read)))
+(allow azenith_service hal_wifi_supplicant_default (dir (search)))
+(allow azenith_service hal_wifi_supplicant_default (file (open read)))
+(allow azenith_service hap (dir (search)))
+(allow azenith_service hap (file (open read)))
+(allow azenith_service hiber (dir (search)))
+(allow azenith_service hiber (file (open read)))
+(allow azenith_service hwservicemanager (dir (search)))
+(allow azenith_service hwservicemanager (file (open read)))
+(allow azenith_service incidentd (dir (search)))
+(allow azenith_service incidentd (file (open read)))
+(allow azenith_service init (dir (search)))
+(allow azenith_service init (file (open read)))
+(allow azenith_service init (unix_stream_socket (connectto)))
+(allow azenith_service installd (dir (search)))
+(allow azenith_service installd (file (open read)))
+(allow azenith_service ipsec_mon (dir (search)))
+(allow azenith_service ipsec_mon (file (open read)))
+(allow azenith_service kernel (dir (search)))
+(allow azenith_service kernel (file (open read)))
+(allow azenith_service keystore (dir (search)))
+(allow azenith_service keystore (file (open read)))
+(allow azenith_service lbs_dbg_ext (dir (search)))
+(allow azenith_service lbs_dbg_ext (file (open read)))
+(allow azenith_service lbs_hidl_service (dir (search)))
+(allow azenith_service lbs_hidl_service (file (open read)))
+(allow azenith_service lmkd (dir (search)))
+(allow azenith_service lmkd (file (open read)))
+(allow azenith_service logd (dir (search)))
+(allow azenith_service logd (file (open read)))
+(allow azenith_service mediacodec (dir (search)))
+(allow azenith_service mediacodec (file (open read)))
+(allow azenith_service mediaextractor (dir (search)))
+(allow azenith_service mediaextractor (file (open read)))
+(allow azenith_service mediametrics (dir (search)))
+(allow azenith_service mediametrics (file (open read)))
+(allow azenith_service mediaprovider_app (dir (search)))
+(allow azenith_service mediaprovider_app (file (open read)))
+(allow azenith_service mediaserver (dir (search)))
+(allow azenith_service mediaserver (file (open read)))
+(allow azenith_service mediaswcodec (dir (search)))
+(allow azenith_service mediaswcodec (file (open read)))
+(allow azenith_service mnld (dir (search)))
+(allow azenith_service mnld (file (open read)))
+(allow azenith_service mobicore (dir (search)))
+(allow azenith_service mobicore (file (open read)))
+(allow azenith_service mobile_log_d (dir (search)))
+(allow azenith_service mobile_log_d (file (open read)))
+(allow azenith_service mtk_agpsd (dir (search)))
+(allow azenith_service mtk_agpsd (file (open read)))
+(allow azenith_service mtk_hal_audio (dir (search)))
+(allow azenith_service mtk_hal_audio (file (open read)))
+(allow azenith_service mtk_hal_bluetooth (dir (search)))
+(allow azenith_service mtk_hal_bluetooth (file (open read)))
+(allow azenith_service mtk_hal_c2 (dir (search)))
+(allow azenith_service mtk_hal_c2 (file (open read)))
+(allow azenith_service mtk_hal_camera (dir (search)))
+(allow azenith_service mtk_hal_camera (file (open read)))
+(allow azenith_service mtk_hal_gnss (dir (search)))
+(allow azenith_service mtk_hal_gnss (file (open read)))
+(allow azenith_service mtk_hal_light (dir (search)))
+(allow azenith_service mtk_hal_light (file (open read)))
+(allow azenith_service mtk_hal_memtrack (dir (search)))
+(allow azenith_service mtk_hal_memtrack (file (open read)))
+(allow azenith_service mtk_hal_neuralnetworks (dir (search)))
+(allow azenith_service mtk_hal_neuralnetworks (file (open read)))
+(allow azenith_service mtk_hal_nvramagent (dir (search)))
+(allow azenith_service mtk_hal_nvramagent (file (open read)))
+(allow azenith_service mtk_hal_nwk_opt (dir (search)))
+(allow azenith_service mtk_hal_nwk_opt (file (open read)))
+(allow azenith_service mtk_hal_power (dir (search)))
+(allow azenith_service mtk_hal_power (file (open read)))
+(allow azenith_service mtk_hal_pq (dir (search)))
+(allow azenith_service mtk_hal_pq (file (open read)))
+(allow azenith_service mtk_hal_secure_element (dir (search)))
+(allow azenith_service mtk_hal_secure_element (file (open read)))
+(allow azenith_service mtk_hal_sensors (dir (search)))
+(allow azenith_service mtk_hal_sensors (file (open read)))
+(allow azenith_service mtk_hal_usb (dir (search)))
+(allow azenith_service mtk_hal_usb (file (open read)))
+(allow azenith_service netd (dir (search)))
+(allow azenith_service netd (file (open read)))
+(allow azenith_service netdagent (dir (search)))
+(allow azenith_service netdagent (file (open read)))
+(allow azenith_service netdiag (dir (search)))
+(allow azenith_service netdiag (file (open read)))
+(allow azenith_service network_stack (dir (search)))
+(allow azenith_service network_stack (file (open read)))
+(allow azenith_service nfc (dir (search)))
+(allow azenith_service nfc (file (open read)))
+(allow azenith_service platform_app (dir (search)))
+(allow azenith_service platform_app (file (open read)))
+(allow azenith_service pnpmgr (dir (search)))
+(allow azenith_service pnpmgr (file (open read)))
+(allow azenith_service priv_app (dir (search)))
+(allow azenith_service priv_app (file (open read)))
+(allow azenith_service prng_seeder (dir (search)))
+(allow azenith_service prng_seeder (file (open read)))
+(allow azenith_service proc (file (getattr open read setattr write)))
+(allow azenith_service proc_compaction_proactiveness (file (getattr open read setattr write)))
+(allow azenith_service proc_hung_task (file (getattr open read setattr write)))
+(allow azenith_service proc_page_cluster (file (getattr open read setattr write)))
+(allow azenith_service proc_panic (file (getattr open read setattr write)))
+(allow azenith_service proc_sched (file (getattr open read setattr write)))
+(allow azenith_service proc_sched_migration_cost_ns (file (getattr open read setattr write)))
+(allow azenith_service property_socket (sock_file (write)))
+(allow azenith_service radio (dir (search)))
+(allow azenith_service radio (file (open read)))
+(allow azenith_service rild (dir (search)))
+(allow azenith_service rild (file (open read)))
+(allow azenith_service secure_element (dir (search)))
+(allow azenith_service secure_element (file (open read)))
+(allow azenith_service servicemanager (dir (search)))
+(allow azenith_service servicemanager (file (open read)))
+(allow azenith_service smartcharging (dir (search)))
+(allow azenith_service smartcharging (file (open read)))
+(allow azenith_service statsd (dir (search)))
+(allow azenith_service statsd (file (open read)))
+(allow azenith_service storage_feature_cloudctl (dir (search)))
+(allow azenith_service storage_feature_cloudctl (file (open read)))
+(allow azenith_service storaged (dir (search)))
+(allow azenith_service storaged (file (open read)))
+(allow azenith_service stucklogo (dir (search)))
+(allow azenith_service stucklogo (file (open read)))
+(allow azenith_service su (dir (search)))
+(allow azenith_service su (file (open read)))
+(allow azenith_service surfaceflinger (dir (search)))
+(allow azenith_service surfaceflinger (file (open read)))
+(allow azenith_service system_app (dir (search)))
+(allow azenith_service system_app (file (open read)))
+(allow azenith_service system_file (file (execute execute_no_trans getattr map open read)))
+(allow azenith_service system_prop (file (getattr map open read)))
+(allow azenith_service system_server (dir (search)))
+(allow azenith_service system_server (file (open read)))
+(allow azenith_service system_suspend (dir (search)))
+(allow azenith_service system_suspend (file (open read)))
+(allow azenith_service thermal (dir (search)))
+(allow azenith_service thermal (file (open read)))
+(allow azenith_service thermal_core (dir (search)))
+(allow azenith_service thermal_core (file (open read)))
+(allow azenith_service thermald (dir (search)))
+(allow azenith_service thermald (file (open read)))
+(allow azenith_service thermalloadalgod (dir (search)))
+(allow azenith_service thermalloadalgod (file (open read)))
+(allow azenith_service tneengine (dir (search)))
+(allow azenith_service tneengine (file (open read)))
+(allow azenith_service tnev (dir (search)))
+(allow azenith_service tnev (file (open read)))
+(allow azenith_service tombstoned (dir (search)))
+(allow azenith_service tombstoned (file (open read)))
+(allow azenith_service toolbox (dir (search)))
+(allow azenith_service toolbox (file (open read)))
+(allow azenith_service traced (dir (search)))
+(allow azenith_service traced (file (open read)))
+(allow azenith_service traced_probes (dir (search)))
+(allow azenith_service traced_probes (file (open read)))
+(allow azenith_service tran_hwinfo_binder (dir (search)))
+(allow azenith_service tran_hwinfo_binder (file (open read)))
+(allow azenith_service tran_ihh (dir (search)))
+(allow azenith_service tran_ihh (file (open read)))
+(allow azenith_service tran_ihh_cloudctl (dir (search)))
+(allow azenith_service tran_ihh_cloudctl (file (open read)))
+(allow azenith_service trancamserver (dir (search)))
+(allow azenith_service trancamserver (file (open read)))
+(allow azenith_service trandatacenter (dir (search)))
+(allow azenith_service trandatacenter (file (open read)))
+(allow azenith_service tranlog (dir (search)))
+(allow azenith_service tranlog (file (open read)))
+(allow azenith_service tranlogconfig (dir (search)))
+(allow azenith_service tranlogconfig (file (open read)))
+(allow azenith_service tranradionet (dir (search)))
+(allow azenith_service tranradionet (file (open read)))
+(allow azenith_service trans_sched (dir (search)))
+(allow azenith_service trans_sched (file (open read)))
+(allow azenith_service transtorage (dir (search)))
+(allow azenith_service transtorage (file (open read)))
+(allow azenith_service ueventd (dir (search)))
+(allow azenith_service ueventd (file (open read)))
+(allow azenith_service untrusted_app (dir (search)))
+(allow azenith_service untrusted_app (file (open read)))
+(allow azenith_service update_engine (dir (search)))
+(allow azenith_service update_engine (file (open read)))
+(allow azenith_service vendor_file (file (execute_no_trans)))
+(allow azenith_service vendor_init (dir (search)))
+(allow azenith_service vendor_init (file (open read)))
+(allow azenith_service vendor_toolbox_exec (file (execute_no_trans)))
+(allow azenith_service vndservicemanager (dir (search)))
+(allow azenith_service vndservicemanager (file (open read)))
+(allow azenith_service vold (dir (search)))
+(allow azenith_service vold (file (open read)))
+(allow azenith_service vpud_native (dir (search)))
+(allow azenith_service vpud_native (file (open read)))
+(allow azenith_service vtservice (dir (search)))
+(allow azenith_service vtservice (file (open read)))
+(allow azenith_service vtservice_hidl (dir (search)))
+(allow azenith_service vtservice_hidl (file (open read)))
+(allow azenith_service webview_zygote (dir (search)))
+(allow azenith_service webview_zygote (file (open read)))
+(allow azenith_service wificond (dir (search)))
+(allow azenith_service wificond (file (open read)))
+(allow azenith_service wlan_assistant (dir (search)))
+(allow azenith_service wlan_assistant (file (open read)))
+(allow azenith_service zygote (dir (search)))
+(allow azenith_service zygote (file (open read)))
+(allow init azenith_service (process (noatsecure rlimitinh siginh transition)))
+(allow init azenith_service_exec (file (execute getattr open read)))
+(allow vendor_init toolbox_exec (file (map execute execute_no_trans getattr open read)))
+(allow vendor_init vendor_file (file (entrypoint)))
+```
+---
