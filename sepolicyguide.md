@@ -85,15 +85,16 @@ persist.sys.azenith.    u:object_r:azenith_prop:s0
 
 ## 3. Possible Denials (DIY)
 
-# Do denials yourself!!
+### Denials may vary on different device/ROMs so address denials yourself!!
 Example denials might include:
 
 * Attempts by `azenith_service` to access `sysfs` or `procfs`
 * Property service access restrictions
 
 Keep iterating until all legitimate functionality works without `avc: denied` spam.
+
+#### Example found denials on Transsion Device, for other device should adjust accordingly or simply use your own
 ```
-Example found denials on Transsion Device, for other device should adjust accordingly or simply use your own
 (allow bluetooth azenith_prop (file (read)))
 (allow dumpstate azenith_prop (file (getattr map open read)))
 (allow gmscore_app azenith_prop (file (read)))
@@ -416,5 +417,41 @@ Example found denials on Transsion Device, for other device should adjust accord
 (allow init azenith_service_exec (file (execute getattr open read)))
 (allow vendor_init toolbox_exec (file (map execute execute_no_trans getattr open read)))
 (allow vendor_init vendor_file (file (entrypoint)))
+(allow azenith_service azenith_prop (file (getattr map open read)))
+(allow azenith_service azenith_service (capability (dac_override dac_read_search fowner)))
+(allow azenith_service fuse (dir (search)))
+(allow azenith_service fuse (file (getattr open read)))
+(allow azenith_service gmscore_app (file (read)))
+(allow azenith_service mediaprovider_app (file (read)))
+(allow azenith_service mnt_user_file (dir (search)))
+(allow azenith_service mnt_user_file (lnk_file (read)))
+(allow azenith_service permissioncontroller_app (dir (search)))
+(allow azenith_service permissioncontroller_app (file (open read)))
+(allow azenith_service platform_app (file (read)))
+(allow azenith_service power_service (service_manager (find)))
+(allow azenith_service priv_app (file (read)))
+(allow azenith_service proc_cpufreq (dir (search)))
+(allow azenith_service proc_cpufreq (file (getattr open read setattr write)))
+(allow azenith_service proc_gpufreqv2 (dir (search)))
+(allow azenith_service proc_gpufreqv2 (file (getattr open read setattr write)))
+(allow azenith_service proc_perf (file (setattr write)))
+(allow azenith_service proc_perfmgr (dir (search)))
+(allow azenith_service proc_ppm (dir (search)))
+(allow azenith_service proc_ppm (file (getattr open read setattr write)))
+(allow azenith_service secure_element (file (read)))
+(allow azenith_service servicemanager (binder (call)))
+(allow azenith_service settings_service (service_manager (find)))
+(allow azenith_service sysfs (file (getattr open read setattr write)))
+(allow azenith_service sysfs_devices_system_cpu (file (setattr write)))
+(allow azenith_service sysfs_dvfsrc_dbg (dir (search)))
+(allow azenith_service sysfs_dvfsrc_dbg (file (getattr open read setattr write)))
+(allow azenith_service sysfs_dvfsrc_devfreq (dir (search)))
+(allow azenith_service sysfs_dvfsrc_devfreq (file (getattr open read setattr write)))
+(allow azenith_service system_server (binder (call transfer)))
+(allow azenith_service untrusted_app (file (read)))
+(allow azenith_service window_service (service_manager (find)))
+(allow system_server azenith_service (binder (call)))
+(allow system_server azenith_service (fd (use)))
+(allow system_server azenith_service (fifo_file (write)))
 ```
 ---
