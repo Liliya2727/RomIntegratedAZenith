@@ -23,7 +23,8 @@ bool did_log_preload = true;
 pid_t game_pid = 0;
 
 int main(void) {
-
+    // Set up the environment PATH to ensure all binaries can be found.
+    setup_path();
 
     // Register signal handlers
     signal(SIGINT, sighandler);
