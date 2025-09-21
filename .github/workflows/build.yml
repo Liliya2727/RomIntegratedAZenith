@@ -28,7 +28,7 @@ concurrency:
 
 jobs:
   build:
-    name: Build and Upload Package
+    name: Build and Upload Artifacts
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -44,13 +44,19 @@ jobs:
       - name: Build AZenith JNI
         run: ndk-build
 
-      - name: Compile Binary Package Zip
-        id: compileZip
-        run: bash .github/scripts/compile_zip.sh
-
-      - name: Upload Build Artifact
+      - name: Upload Build Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: AZenith-Package
-          path: ${{ steps.compileZip.outputs.zipName }}
+          name: AZenith-Build-Artifacts
+          path: |
+            libs/
+            tweakfls/
+            modules/
+            preloadbin/
+            gamelist.txt
+            listproperties.txt
+            init.azenith.rc
+            vendor_sepolicy.cil
+            version
           retention-days: 7
+
