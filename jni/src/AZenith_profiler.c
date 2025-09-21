@@ -16,6 +16,7 @@
 #include <AZenith.h>
 #include <errno.h>  // For errno
 #include <string.h> // For strerror()
+#include <unistd.h> // For sleep()
 /* add path access for full path*/
 #include <stdlib.h>
 
@@ -57,30 +58,69 @@ static int get_transsion_game_mode(void) {
         }
 
         switch (mode) {
-            case 0: // Powersave
-                log_zenith(LOG_INFO, "Transsion Game Mode: Powersave");
-                final_mode = 3;
-                break;
-            case 1: // Balance
-                log_zenith(LOG_INFO, "Transsion Game Mode: Balance");
-                final_mode = 2;
-                break;
-            case 2: // Performance
-                log_zenith(LOG_INFO, "Transsion Game Mode: Performance");
-                final_mode = 1;
-                break;
-            default:
-                log_zenith(LOG_WARN, "Unknown Transsion Game Mode value received.");
-                final_mode = -1;
-                break;
+            case 0: final_mode = 3; break; // Powersave
+            case 1: final_mode = 2; break; // Balance
+            case 2: final_mode = 1; break; // Performance
+            default: final_mode = -1; break; // Unknown
         }
         free(mode_str);
     } else {
         log_zenith(LOG_WARN, "Failed to read Transsion Game Mode setting.");
     }
-
     return final_mode;
 }
+
+/**
+ * @brief Applies the specified performance profile by setting system properties.
+ *
+ * @param profile The profile to apply (1: Perf, 2: Normal, 3: Powersave).
+ */
+static void apply_profile(int profile) {
+    systemv("/vendor/bin/setprop sys.azenith.currentprofile %d", profile);
+    systemv("/vendor/bin/AZenith_Profiler %d", profile);
+    log_zenith(LOG_INFO, "Successfully applied profile: %d", profile);
+}
+
+ /***********************************************************************************
+ * Function Name      : sync_game_profile_loop
+ * Inputs             : get_transsion_game_mode
+ * Description        : This function runs as long as a game is active. It polls the Game Space
+ *                      mode every 2 seconds and applies the corresponding profile if it changes.
+ *                      When the game exits, the loop terminates and the profile is reverted to normal.
+ ***********************************************************************************/
+static void sync_game_profile_loop(void) {
+    int last_known_profile = -1;
+    char* current_game = get_gamestart();
+
+    // Loop as long as a game is detected in the foreground
+    while (current_game != NULL && strlen(current_game) > 0) {
+        int transsion_mode = get_transsion_game_mode();
+
+        // Check if the mode is valid and has changed since the last check
+        if (transsion_mode != -1 && transsion_mode != last_known_profile) {
+            log_zenith(LOG_INFO, "Transsion Game Mode changed to %d. Syncing...", transsion_mode);
+            apply_profile(transsion_mode);
+            last_known_profile = transsion_mode;
+        }
+
+        // Wait for 2 seconds before the next check to avoid high CPU usage
+        sleep(2);
+
+        // Check again if the game is still running
+        free(current_game); // Free memory from the previous check
+        current_game = get_gamestart();
+    }
+    
+    // Cleanup after the loop finishes
+    if (current_game) {
+        free(current_game);
+    }
+
+    log_zenith(LOG_INFO, "Game has exited. Reverting to normal profile.");
+    systemv("/vendor/bin/setprop sys.azenith.gameinfo \"NULL 0 0\"");
+    apply_profile(2); // Revert to profile 2 (Normal)
+}
+
 
 /***********************************************************************************
  * Function Name      : run_profiler
@@ -91,21 +131,17 @@ static int get_transsion_game_mode(void) {
  * Returns            : None
  * Description        : Switch to specified performance profile.
  ***********************************************************************************/
-
 void run_profiler(const int profile) {
-    int final_profile = profile;
-
-    // Check for Transsion Game Space support, but only once.
+    // Perform a one-time check for Transsion Game Space support
     if (!gamespace_props_checked) {
         char* support_prop = execute_command("/system/bin/getprop persist.sys.azenith.syncgamespace.support");
-        char* is_transsion_prop = execute_command("/system/bin/getprop persist.sys.azenith.issupportgamespace");
+        char* is_transsion_prop = execute_command("/system/bin/getprop ro.product.brand");
 
-        // Use strncmp to safely compare prop values without needing to trim newlines
         if (support_prop && is_transsion_prop &&
             strncmp(support_prop, "1", 1) == 0 &&
-            strncmp(is_transsion_prop, "transsion", 9) == 0) {
+            (strncmp(is_transsion_prop, "TECNO", 5) == 0 || strncmp(is_transsion_prop, "Infinix", 7) == 0 || strncmp(is_transsion_prop, "itel", 4) == 0)) {
             transsion_gamespace_support = true;
-            log_zenith(LOG_INFO, "Transsion Game Space support detected and enabled.");
+            log_zenith(LOG_INFO, "Transsion Game Space sync is supported and enabled.");
         }
 
         if (support_prop) free(support_prop);
@@ -113,26 +149,27 @@ void run_profiler(const int profile) {
         gamespace_props_checked = true;
     }
 
-    // If game profile is requested and Transsion support is enabled, sync with its game space setting.
-    if (profile == 1 && transsion_gamespace_support) {
-        int transsion_profile = get_transsion_game_mode();
-        if (transsion_profile != -1) {
-            log_zenith(LOG_INFO, "Syncing with Transsion Game Space. Setting profile to %d", transsion_profile);
-            final_profile = transsion_profile;
-        } else {
-            log_zenith(LOG_WARN, "Failed to get Transsion Game Space mode, using default performance profile.");
-        }
-    }
-
-    char gameinfo_prop[256];
+    // A game has been launched
     if (profile == 1) {
+        char gameinfo_prop[256];
         snprintf(gameinfo_prop, sizeof(gameinfo_prop), "%s %d %d", gamestart, game_pid, uidof(game_pid));
         systemv("/vendor/bin/setprop sys.azenith.gameinfo \"%s\"", gameinfo_prop);
+
+        if (transsion_gamespace_support) {
+            // Enter the real-time sync loop. This function will block and handle
+            // profile changes until the game exits.
+            log_zenith(LOG_INFO, "Game detected. Starting real-time Transsion Game Space sync.");
+            sync_game_profile_loop();
+        } else {
+            // Standard behavior: apply performance profile and exit
+            log_zenith(LOG_INFO, "Game detected. Applying default performance profile.");
+            apply_profile(1);
+        }
     } else {
+        // A non-game profile is requested (e.g., normal, powersave)
         systemv("/vendor/bin/setprop sys.azenith.gameinfo \"NULL 0 0\"");
+        apply_profile(profile);
     }
-    systemv("/vendor/bin/setprop sys.azenith.currentprofile %d", final_profile);
-    systemv("/vendor/bin/AZenith_Profiler %d", final_profile);
 }
 
 /***********************************************************************************
@@ -141,10 +178,6 @@ void run_profiler(const int profile) {
  * Returns            : char* (dynamically allocated string with the game package name)
  * Description        : Searches for the currently visible application that matches
  * any package name listed in gamelist.
- * This helps identify if a specific game is running in the foreground.
- * Uses dumpsys to retrieve visible apps and filters by packages
- * listed in Gamelist.
- * Note               : Caller is responsible for freeing the returned string.
  ***********************************************************************************/
 char* get_gamestart(void) {
     return execute_command("/system/bin/dumpsys window visible-apps | /vendor/bin/grep 'package=.* ' | /vendor/bin/grep -Eo -f %s",
@@ -154,11 +187,6 @@ char* get_gamestart(void) {
  * Function Name      : get_screenstate_normal
  * Inputs             : None
  * Returns            : bool - true if screen was awake
- * false if screen was asleep
- * Description        : Retrieves the current screen wakefulness state from dumpsys command.
- * Note               : In repeated failures up to 6, this function will skip fetch routine
- * and just return true all time using function pointer.
- * Never call this function, call get_screenstate() instead.
  ***********************************************************************************/
 bool get_screenstate_normal(void) {
     static char fetch_failed = 0;
@@ -176,8 +204,6 @@ bool get_screenstate_normal(void) {
 
     if (fetch_failed == 6) {
         log_zenith(LOG_FATAL, "get_screenstate is out of order!");
-
-        // Set default state after too many failures via function pointer
         get_screenstate = return_true;
     }
 
@@ -188,12 +214,6 @@ bool get_screenstate_normal(void) {
  * Function Name      : get_low_power_state_normal
  * Inputs             : None
  * Returns            : bool - true if Battery Saver is enabled
- * false otherwise
- * Description        : Checks if the device's Battery Saver mode is enabled by using
- * global db or dumpsys power.
- * Note               : In repeated failures up to 6, this function will skip fetch routine
- * and just return false all time using function pointer.
- * Never call this function, call get_low_power_state() instead.
  ***********************************************************************************/
 bool get_low_power_state_normal(void) {
     static char fetch_failed = 0;
@@ -215,8 +235,6 @@ bool get_low_power_state_normal(void) {
 
     if (fetch_failed == 6) {
         log_zenith(LOG_FATAL, "get_low_power_state is out of order!");
-
-        // Set default state after too many failures via function pointer
         get_low_power_state = return_false;
     }
 
