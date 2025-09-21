@@ -21,42 +21,39 @@ on:
       - "vendor_sepolicy.cil"
       - "version"
 
-# Allow only one concurrent build workflow
+# Allow only one concurrent build workflows
 concurrency:
   group: build
   cancel-in-progress: true
 
 jobs:
   build:
-    name: Build and Upload Artifacts
+    name: Build Binary Package Zip
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v4.2.2
         with:
           fetch-depth: 0
 
       - name: NDK Setup
-        uses: nttld/setup-ndk@v1
+        uses: nttld/setup-ndk@v1.5.0
         with:
           ndk-version: r28b
 
       - name: Build AZenith JNI
         run: ndk-build
 
-      - name: Upload Build Artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: AZenith-Build-Artifacts
-          path: |
-            libs/
-            tweakfls/
-            modules/
-            preloadbin/
-            gamelist.txt
-            listproperties.txt
-            init.azenith.rc
-            vendor_sepolicy.cil
-            version
-          retention-days: 7
+      - name: Compile Binary Package Zip
+        id: compileZip
+        run: bash .github/scripts/compile_zip.sh
 
+      - name: Unzip AZenith Package
+        run: |
+          unzip ${{ steps.compileZip.outputs.zipName }} -d extracted
+
+      - name: Upload Build Artifact
+        uses: actions/upload-artifact@v4.6.2
+        with:
+          name: ${{ steps.compileZip.outputs.zipName }}
+          path: extracted/**
