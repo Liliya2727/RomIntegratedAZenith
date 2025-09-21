@@ -43,6 +43,17 @@ int main(void) {
     while (1) {
         sleep(LOOP_INTERVAL);
 
+        // Apply frequencies
+        if (get_screenstate()) {
+            if (cur_mode == BALANCED_PROFILE)
+                systemv("AZenith_Profiler setsfreqs");
+            else if (cur_mode == ECO_MODE)
+                systemv("AZenith_Profiler setsfreqs");
+            else if (cur_mode == PERFORMANCE_PROFILE)
+                systemv("AZenith_Profiler apply_game_freqs");
+        } else {
+            // Screen Off, Do Nothing
+        }
 
         // Only fetch gamestart when user not in-game
         // prevent overhead from dumpsys commands.

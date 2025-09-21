@@ -1,4 +1,4 @@
-// Toggle lock max freq in Perf Profile
+// Toggle Lite Mode(change the prop func)
 // Val 1 = ON , 0 = OFF
 persist.sys.azenithconf.cpulimit 
 
@@ -14,9 +14,15 @@ persist.sys.azenithconf.dndongaming
 // Val 1 = ON , 0 = OFF
 persist.sys.azenithconf.gpreload
 
+// Set Limit Frequencies
+// Val [ 10% > 100% ] With Percentage or without Percentage [make your own val options for your own roms.]
+persist.sys.azenithconf.freqoffset
+
 // Save Default Gov Value
+// Only Used for performance profile // Dont bother if value differ with ur cur gov //
 persist.sys.azenith.defaultgov
 
 // INFO 
 sys.azenith.gameinfo // Show Current game info // VAL <pkgname> <pid> <uid>
 sys.azenith.currentprofile // Current Profile // VAL 0/1/2/3
+// 1 = Performance // 2 = Balanced // 3 = Powersaves //

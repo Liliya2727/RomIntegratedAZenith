@@ -13,17 +13,17 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#include <string.h> // For strerror()
-#include <errno.h>  // For errno
 #include <AZenith.h>
+#include <errno.h>  // For errno
+#include <string.h> // For strerror()
 /* add path access for full path*/
 #include <stdlib.h>
 
 void setup_path(void) {
     int result = setenv("PATH",
-        "/product/bin:/apex/com.android.runtime/bin:/apex/com.android.art/bin:"
-        "/system_ext/bin:/system/bin:/system/xbin:/odm/bin:/vendor/bin:/vendor/xbin",
-        1 /* overwrite existing value */
+                        "/product/bin:/apex/com.android.runtime/bin:/apex/com.android.art/bin:"
+                        "/system_ext/bin:/system/bin:/system/xbin:/odm/bin:/vendor/bin:/vendor/xbin",
+                        1 /* overwrite existing value */
     );
 
     // Check the return value of setenv
@@ -52,14 +52,13 @@ void run_profiler(const int profile) {
     char gameinfo_prop[256];
     if (profile == 1) {
         snprintf(gameinfo_prop, sizeof(gameinfo_prop), "%s %d %d", gamestart, game_pid, uidof(game_pid));
-        (void)systemv("setprop sys.azenith.gameinfo \"%s\"", gameinfo_prop);
+        systemv("/vendor/bin/setprop sys.azenith.gameinfo \"%s\"", gameinfo_prop);
     } else {
-        (void)system("setprop sys.azenith.gameinfo \"NULL 0 0\"");
+        systemv("/vendor/bin/setprop sys.azenith.gameinfo \"NULL 0 0\"");
     }
-    (void)systemv("setprop sys.azenith.currentprofile %d", profile);
-    (void)systemv("/vendor/bin/AZenith_Profiler %d", profile);
+    systemv("/vendor/bin/setprop sys.azenith.currentprofile %d", profile);
+    systemv("/vendor/bin/AZenith_Profiler %d", profile);
 }
-
 
 /***********************************************************************************
  * Function Name      : get_gamestart
@@ -73,7 +72,8 @@ void run_profiler(const int profile) {
  * Note               : Caller is responsible for freeing the returned string.
  ***********************************************************************************/
 char* get_gamestart(void) {
-    return execute_command("/system/bin/dumpsys window visible-apps | /vendor/bin/grep 'package=.* ' | /vendor/bin/grep -Eo -f %s", GAMELIST);
+    return execute_command("/system/bin/dumpsys window visible-apps | /vendor/bin/grep 'package=.* ' | /vendor/bin/grep -Eo -f %s",
+                           GAMELIST);
 }
 /***********************************************************************************
  * Function Name      : get_screenstate_normal
