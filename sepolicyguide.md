@@ -453,5 +453,9 @@ Keep iterating until all legitimate functionality works without `avc: denied` sp
 (allow system_server azenith_service (binder (call)))
 (allow system_server azenith_service (fd (use)))
 (allow system_server azenith_service (fifo_file (write)))
+(allow system_app azenith_prop (property_service (set)))
+(allow azenith_service fsck_untrusted (dir (search)))
+(allow azenith_service fsck_untrusted (file (open read)))
+(allow untrusted_app_30 azenith_prop (file (read)))
 ```
 ---
