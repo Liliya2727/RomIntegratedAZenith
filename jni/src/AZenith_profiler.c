@@ -17,7 +17,7 @@
 #include <errno.h>  // For errno
 #include <string.h> // For strerror()
 #include <stdlib.h> // For general utilities
-#include <cutils/properties.h> // For native property access
+#include <sys/system_properties.h> // For native property access
 
 // Define binary paths for easier maintenance
 #define DUMPSYS_PATH  "/system/bin/dumpsys"
@@ -47,13 +47,13 @@ bool (*get_low_power_state)(void) = get_low_power_state_normal;
 static bool transsion_gamespace_support = false;
 static bool gamespace_props_checked = false;
 
-// use property_get for efficiency
+// use system property get in ndk instead
 static char* get_prop(const char* prop) {
-    char value[PROPERTY_VALUE_MAX];
-    if (property_get(prop, value, NULL) > 0) {
+    char value[PROP_VALUE_MAX];
+    if (__system_property_get(prop, value) > 0) {
         return strdup(value); // Return a dynamically allocated copy
     }
-    return NULL; // Return NULL if  not found or empty
+    return NULL; // Return NULL if not found or empty
 }
 
 // Get game mode from Transsion's Game Space
@@ -137,15 +137,16 @@ void run_profiler(const int profile) {
     char gameinfo_prop[256];
     char profile_str[4]; // Buffer for integer to string conversion
 
+    // system property ndk
     if (profile == 1) {
         snprintf(gameinfo_prop, sizeof(gameinfo_prop), "%s %d %d", gamestart, game_pid, uidof(game_pid));
-        property_set("sys.azenith.gameinfo", gameinfo_prop);
+        __system_property_set("sys.azenith.gameinfo", gameinfo_prop);
     } else {
-        property_set("sys.azenith.gameinfo", "NULL 0 0");
+        __system_property_set("sys.azenith.gameinfo", "NULL 0 0");
     }
 
     snprintf(profile_str, sizeof(profile_str), "%d", final_profile);
-    property_set("sys.azenith.currentprofile", profile_str);
+    __system_property_set("sys.azenith.currentprofile", profile_str);
 
     // Execute the profiler script
     systemv(PROFILER_PATH " %d", final_profile);
@@ -316,4 +317,3 @@ bool get_low_power_state_normal(void) {
 
     return false;
 }
-
