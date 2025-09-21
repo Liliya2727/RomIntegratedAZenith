@@ -18,10 +18,8 @@
 #include <string.h> // For strerror()
 /* add path access for full path*/
 #include <stdlib.h>
-/* For native property access */
-#include <sys/system_properties.h>
 
-// Define binary paths for easier maintenance
+// Define binary path needed for get_transsion_game_mode
 #define SETTINGS_PATH "/system/bin/settings"
 
 void setup_path(void) {
@@ -43,26 +41,9 @@ void setup_path(void) {
 bool (*get_screenstate)(void) = get_screenstate_normal;
 bool (*get_low_power_state)(void) = get_low_power_state_normal;
 
-
 // For Transsion Game Space Sync
 static bool transsion_gamespace_support = false;
 static bool gamespace_props_checked = false;
-
-// Helper function to get a system property using NDK functions.
-// Caller is responsible for freeing the returned string.
-static char* get_prop(const char* prop) {
-    const prop_info* pi = __system_property_find(prop);
-    if (pi == NULL) {
-        return NULL; // Property does not exist
-    }
-
-    char value[PROP_VALUE_MAX];
-    if (__system_property_read(pi, NULL, value) > 0) {
-        return strdup(value);
-    }
-
-    return strdup(""); // Return empty string if property exists but has no value
-}
 
 // Get game mode from Transsion's Game Space
 static int get_transsion_game_mode(void) {
@@ -101,7 +82,6 @@ static int get_transsion_game_mode(void) {
     return final_mode;
 }
 
-
 /***********************************************************************************
  * Function Name      : run_profiler
  * Inputs             : int - 0 for perfcommon
@@ -117,22 +97,23 @@ void run_profiler(const int profile) {
 
     // Check for Transsion Game Space support, but only once.
     if (!gamespace_props_checked) {
-        char* support_prop = get_prop("persist.sys.azenith.syncgamespace.support");
-        char* is_transsion_prop = get_prop("persist.sys.azenith.issupportgamespace");
+        char* support_prop = execute_command("/system/bin/getprop persist.sys.azenith.syncgamespace.support");
+        char* is_transsion_prop = execute_command("/system/bin/getprop persist.sys.azenith.issupportgamespace");
 
+        // Use strncmp to safely compare prop values without needing to trim newlines
         if (support_prop && is_transsion_prop &&
-            strcmp(support_prop, "1") == 0 &&
-            strcmp(is_transsion_prop, "transsion") == 0) {
+            strncmp(support_prop, "1", 1) == 0 &&
+            strncmp(is_transsion_prop, "transsion", 9) == 0) {
             transsion_gamespace_support = true;
             log_zenith(LOG_INFO, "Transsion Game Space support detected and enabled.");
         }
 
-        free(support_prop);
-        free(is_transsion_prop);
+        if (support_prop) free(support_prop);
+        if (is_transsion_prop) free(is_transsion_prop);
         gamespace_props_checked = true;
     }
 
-    // If game profile is requested and Transsion support is enabled, sync with Transsion's game space setting.
+    // If game profile is requested and Transsion support is enabled, sync with its game space setting.
     if (profile == 1 && transsion_gamespace_support) {
         int transsion_profile = get_transsion_game_mode();
         if (transsion_profile != -1) {
@@ -144,20 +125,13 @@ void run_profiler(const int profile) {
     }
 
     char gameinfo_prop[256];
-    char profile_str[4]; // Buffer for integer to string conversion
-
-    // Use native system property functions
     if (profile == 1) {
         snprintf(gameinfo_prop, sizeof(gameinfo_prop), "%s %d %d", gamestart, game_pid, uidof(game_pid));
-        __system_property_set("sys.azenith.gameinfo", gameinfo_prop);
+        systemv("/vendor/bin/setprop sys.azenith.gameinfo \"%s\"", gameinfo_prop);
     } else {
-        __system_property_set("sys.azenith.gameinfo", "NULL 0 0");
+        systemv("/vendor/bin/setprop sys.azenith.gameinfo \"NULL 0 0\"");
     }
-
-    snprintf(profile_str, sizeof(profile_str), "%d", final_profile);
-    __system_property_set("sys.azenith.currentprofile", profile_str);
-
-    // Execute the profiler binary
+    systemv("/vendor/bin/setprop sys.azenith.currentprofile %d", final_profile);
     systemv("/vendor/bin/AZenith_Profiler %d", final_profile);
 }
 
