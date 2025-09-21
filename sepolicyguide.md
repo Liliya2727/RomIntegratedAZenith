@@ -93,7 +93,7 @@ Example denials might include:
 
 Keep iterating until all legitimate functionality works without `avc: denied` spam.
 ```
-Example found denials on Transsion Device other device adjust accordingly or use your own
+Example found denials on Transsion Device, for other device should adjust accordingly or simply use your own
 (allow bluetooth azenith_prop (file (read)))
 (allow dumpstate azenith_prop (file (getattr map open read)))
 (allow gmscore_app azenith_prop (file (read)))
