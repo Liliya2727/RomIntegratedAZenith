@@ -20,7 +20,6 @@
 #include <sys/system_properties.h> // For native property access
 
 // Define binary paths for easier maintenance
-// #define DUMPSYS_PATH  "/system/bin/dumpsys" // Removed to use hardcoded path directly
 #define PROFILER_PATH "/vendor/bin/AZenith_Profiler"
 #define SETTINGS_PATH "/system/bin/settings"
 
@@ -210,8 +209,8 @@ char* get_gamestart(void) {
     int game_count = read_gamelist(&game_packages);
     if (game_count == 0) return NULL;
 
-    // Hardcode the full path to ensure the correct binary is executed, bypassing any PATH issues.
-    char* visible_apps = execute_direct("/system/bin/dumpsys", "dumpsys", "window", "visible-apps", NULL);
+    // Revert to shell-based execution to ensure the correct environment is set up for dumpsys.
+    char* visible_apps = execute_command("/system/bin/dumpsys window visible-apps");
     char* found_game_package = NULL;
 
     if (visible_apps) {
@@ -255,8 +254,8 @@ cleanup:
  ***********************************************************************************/
 bool get_screenstate_normal(void) {
     static char fetch_failed = 0;
-    // Hardcode the full path to ensure the correct binary is executed, bypassing any PATH issues.
-    char* power_dump = execute_direct("/system/bin/dumpsys", "dumpsys", "power", NULL);
+    // Revert to shell-based execution to ensure the correct environment is set up for dumpsys.
+    char* power_dump = execute_command("/system/bin/dumpsys power");
 
     if (power_dump) {
         char* wakefulness = strstr(power_dump, "mWakefulness=");
@@ -293,8 +292,8 @@ bool get_low_power_state_normal(void) {
     if (!low_power || strcmp(low_power, "null") == 0 || strlen(low_power) == 0) {
         if (low_power) free(low_power);
 
-        // Hardcode the full path 
-        char* power_dump = execute_direct("/system/bin/dumpsys", "dumpsys", "power", NULL);
+        // Revert to shell-based execution to ensure the correct environment is set up for dumpsys.
+        char* power_dump = execute_command("/system/bin/dumpsys power");
         if (power_dump) {
             char* setting = strstr(power_dump, "mSettingBatterySaverEnabled=");
             if (setting) {
