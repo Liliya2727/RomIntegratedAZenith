@@ -264,13 +264,15 @@ bool get_screenstate_normal(void) {
             fetch_failed = 0;
             return is_awake;
         }
+        // If parsing fails, log the output for debugging before freeing.
+        log_zenith(LOG_DEBUG, "get_screenstate: Unexpected dumpsys output: %s", power_dump);
         free(power_dump);
     }
 
     fetch_failed++;
     log_zenith(LOG_ERROR, "Unable to fetch current screenstate");
 
-    if (fetch_failed == 6) {
+    if (fetch_failed >= 6) {
         log_zenith(LOG_FATAL, "get_screenstate is out of order!");
         get_screenstate = return_true;
     }
@@ -299,6 +301,8 @@ bool get_low_power_state_normal(void) {
                     low_power = strdup("false");
                 }
             } else {
+                // If parsing fails, log the output for debugging before freeing.
+                log_zenith(LOG_DEBUG, "get_low_power_state: Unexpected dumpsys output: %s", power_dump);
                 low_power = NULL;
             }
             free(power_dump);
@@ -317,7 +321,7 @@ bool get_low_power_state_normal(void) {
     fetch_failed++;
     log_zenith(LOG_ERROR, "Unable to fetch battery saver status");
 
-    if (fetch_failed == 6) {
+    if (fetch_failed >= 6) {
         log_zenith(LOG_FATAL, "get_low_power_state is out of order!");
         get_low_power_state = return_false;
     }
