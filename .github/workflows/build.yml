@@ -21,23 +21,23 @@ on:
       - "vendor_sepolicy.cil"
       - "version"
 
-# Allow only one concurrent build workflows
+# Allow only one concurrent build workflow
 concurrency:
   group: build
   cancel-in-progress: true
 
 jobs:
   build:
-    name: Build Binary Package Zip
+    name: Build and Upload Package
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4.2.2
+        uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
       - name: NDK Setup
-        uses: nttld/setup-ndk@v1.5.0
+        uses: nttld/setup-ndk@v1
         with:
           ndk-version: r28b
 
@@ -48,29 +48,9 @@ jobs:
         id: compileZip
         run: bash .github/scripts/compile_zip.sh
 
-      - name: Unzip AZenith Package
-        run: |
-          unzip ${{ steps.compileZip.outputs.zipName }} -d extracted
-
       - name: Upload Build Artifact
-        uses: actions/upload-artifact@v4.6.2
+        uses: actions/upload-artifact@v4
         with:
-          name: ${{ steps.compileZip.outputs.zipName }}
-          path: extracted/**
-
-      - name: Upload To Telegram
-        env:
-          CHAT_ID: ${{ secrets.CHAT_ID }}
-          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
-          COMMIT_MESSAGE: ${{ github.event.head_commit.message }}
-          COMMIT_URL: ${{ github.event.head_commit.url }}
-          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-          TITLE: AZenith Rom INT
-        run: |
-          if [ ! -z "${{ secrets.CHAT_ID }}" ] && [ ! -z "${{ secrets.BOT_TOKEN }}" ]; then
-            export VERSION=$(git rev-list --count HEAD)
-            bash .github/scripts/telegram_bot.sh ${{ steps.compileZip.outputs.zipName }}
-          else
-            echo "Telegram bot token or chatid is undefined, please add it to repository secrets!"
-            exit 1
-          fi
+          name: AZenith-Package
+          path: ${{ steps.compileZip.outputs.zipName }}
+          retention-days: 7
