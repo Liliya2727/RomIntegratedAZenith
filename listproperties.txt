@@ -14,6 +14,14 @@ persist.sys.azenithconf.dndongaming
 // Val 1 = ON , 0 = OFF
 persist.sys.azenithconf.gpreload
 
+// Allow AZenith to sync with game space
+// Val 1 = Allowed, 0 = Deny
+persist.sys.azenith.syncgamespace.support
+
+// Gamespace Type if Gamespace Sync =1
+// Val "transsion" as of now only transsion gamepsace is supported.
+persist.sys.azenith.issupportgamespace
+
 // Set Limit Frequencies
 // Val [ 10% > 100% ] With Percentage or without Percentage [make your own val options for your own roms.]
 persist.sys.azenithconf.freqoffset

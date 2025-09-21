@@ -16,11 +16,12 @@
 #include <AZenith.h>
 #include <errno.h>  // For errno
 #include <string.h> // For strerror()
-#include <stdlib.h> // For general utilities
-#include <sys/system_properties.h> // For native property access
+/* add path access for full path*/
+#include <stdlib.h>
+/* For native property access */
+#include <sys/system_properties.h>
 
 // Define binary paths for easier maintenance
-#define PROFILER_PATH "/vendor/bin/AZenith_Profiler"
 #define SETTINGS_PATH "/system/bin/settings"
 
 void setup_path(void) {
@@ -42,11 +43,13 @@ void setup_path(void) {
 bool (*get_screenstate)(void) = get_screenstate_normal;
 bool (*get_low_power_state)(void) = get_low_power_state_normal;
 
+
 // For Transsion Game Space Sync
 static bool transsion_gamespace_support = false;
 static bool gamespace_props_checked = false;
 
-// Use the modern NDK functions to support keys longer than 31 chars.
+// Helper function to get a system property using NDK functions.
+// Caller is responsible for freeing the returned string.
 static char* get_prop(const char* prop) {
     const prop_info* pi = __system_property_find(prop);
     if (pi == NULL) {
@@ -60,7 +63,6 @@ static char* get_prop(const char* prop) {
 
     return strdup(""); // Return empty string if property exists but has no value
 }
-
 
 // Get game mode from Transsion's Game Space
 static int get_transsion_game_mode(void) {
@@ -99,6 +101,7 @@ static int get_transsion_game_mode(void) {
     return final_mode;
 }
 
+
 /***********************************************************************************
  * Function Name      : run_profiler
  * Inputs             : int - 0 for perfcommon
@@ -129,7 +132,7 @@ void run_profiler(const int profile) {
         gamespace_props_checked = true;
     }
 
-    // If game profile is requested and Transsion support=1 then sync with Transsion's game space setting.
+    // If game profile is requested and Transsion support is enabled, sync with Transsion's game space setting.
     if (profile == 1 && transsion_gamespace_support) {
         int transsion_profile = get_transsion_game_mode();
         if (transsion_profile != -1) {
@@ -143,7 +146,7 @@ void run_profiler(const int profile) {
     char gameinfo_prop[256];
     char profile_str[4]; // Buffer for integer to string conversion
 
-    // system property ndk
+    // Use native system property functions
     if (profile == 1) {
         snprintf(gameinfo_prop, sizeof(gameinfo_prop), "%s %d %d", gamestart, game_pid, uidof(game_pid));
         __system_property_set("sys.azenith.gameinfo", gameinfo_prop);
@@ -154,180 +157,94 @@ void run_profiler(const int profile) {
     snprintf(profile_str, sizeof(profile_str), "%d", final_profile);
     __system_property_set("sys.azenith.currentprofile", profile_str);
 
-    // Execute the profiler script
-    systemv(PROFILER_PATH " %d", final_profile);
+    // Execute the profiler binary
+    systemv("/vendor/bin/AZenith_Profiler %d", final_profile);
 }
-
-/***********************************************************************************
- * Helper Function    : read_gamelist
- * Description        : Reads package names from the GAMELIST file into a dynamically
- * allocated array of strings.
- * Returns            : The number of packages read. Caller is responsible for
- * freeing the allocated memory.
- ***********************************************************************************/
-static int read_gamelist(char*** game_packages) {
-    FILE* file = fopen(GAMELIST, "r");
-    if (!file) {
-        log_zenith(LOG_ERROR, "Could not open gamelist file: %s", GAMELIST);
-        return 0;
-    }
-
-    *game_packages = NULL;
-    int count = 0;
-    char line[256];
-
-    while (fgets(line, sizeof(line), file)) {
-        line[strcspn(line, "\r\n")] = 0; // Remove trailing newline
-        if (strlen(line) == 0) continue;
-
-        *game_packages = realloc(*game_packages, (count + 1) * sizeof(char*));
-        if (!*game_packages) {
-             log_zenith(LOG_FATAL, "Memory allocation failed for gamelist");
-             for (int i=0; i < count; i++) free((*game_packages)[i]);
-             free(*game_packages);
-             fclose(file);
-             return 0;
-        }
-        (*game_packages)[count] = strdup(line);
-        count++;
-    }
-
-    fclose(file);
-    return count;
-}
-
 
 /***********************************************************************************
  * Function Name      : get_gamestart
- * Description        : Searches for a visible app that matches a package in the gamelist.
- * This version parses dumpsys output directly in C to avoid
- * spawning grep processes.
+ * Inputs             : None
+ * Returns            : char* (dynamically allocated string with the game package name)
+ * Description        : Searches for the currently visible application that matches
+ * any package name listed in gamelist.
+ * This helps identify if a specific game is running in the foreground.
+ * Uses dumpsys to retrieve visible apps and filters by packages
+ * listed in Gamelist.
  * Note               : Caller is responsible for freeing the returned string.
  ***********************************************************************************/
 char* get_gamestart(void) {
-    char** game_packages = NULL;
-    int game_count = read_gamelist(&game_packages);
-    if (game_count == 0) return NULL;
-
-    // Revert to shell-based execution to ensure the correct environment is set up for dumpsys.
-    char* visible_apps = execute_command("/system/bin/dumpsys window visible-apps");
-    char* found_game_package = NULL;
-
-    if (visible_apps) {
-        char* current_pos = visible_apps;
-        char* next_line;
-        
-        while ((next_line = strchr(current_pos, '\n')) != NULL) {
-            *next_line = '\0';
-            
-            for (int i = 0; i < game_count; i++) {
-                if (strstr(current_pos, "package=") && strstr(current_pos, game_packages[i])) {
-                    found_game_package = strdup(game_packages[i]);
-                    goto cleanup;
-                }
-            }
-            current_pos = next_line + 1;
-        }
-        
-        if (*current_pos != '\0') {
-             for (int i = 0; i < game_count; i++) {
-                if (strstr(current_pos, "package=") && strstr(current_pos, game_packages[i])) {
-                    found_game_package = strdup(game_packages[i]);
-                    goto cleanup;
-                }
-            }
-        }
-    }
-
-cleanup:
-    free(visible_apps);
-    for (int i = 0; i < game_count; i++) free(game_packages[i]);
-    free(game_packages);
-
-    return found_game_package;
+    return execute_command("/system/bin/dumpsys window visible-apps | /vendor/bin/grep 'package=.* ' | /vendor/bin/grep -Eo -f %s",
+                           GAMELIST);
 }
-
 /***********************************************************************************
  * Function Name      : get_screenstate_normal
- * Description        : Retrieves screen wakefulness by parsing dumpsys output directly
- * in C, avoiding grep and awk.
+ * Inputs             : None
+ * Returns            : bool - true if screen was awake
+ * false if screen was asleep
+ * Description        : Retrieves the current screen wakefulness state from dumpsys command.
+ * Note               : In repeated failures up to 6, this function will skip fetch routine
+ * and just return true all time using function pointer.
+ * Never call this function, call get_screenstate() instead.
  ***********************************************************************************/
 bool get_screenstate_normal(void) {
     static char fetch_failed = 0;
-    // Revert to shell-based execution to ensure the correct environment is set up for dumpsys.
-    char* power_dump = execute_command("/system/bin/dumpsys power");
 
-    if (power_dump) {
-        char* wakefulness = strstr(power_dump, "mWakefulness=");
-        if (wakefulness) {
-            bool is_awake = (strstr(wakefulness, "Awake") != NULL);
-            free(power_dump);
-            fetch_failed = 0;
-            return is_awake;
-        }
-        // If parsing fails, log the output for debugging before freeing.
-        log_zenith(LOG_DEBUG, "get_screenstate: Unexpected dumpsys output: %s", power_dump);
-        free(power_dump);
+    char* screenstate = execute_command("/system/bin/dumpsys power | /vendor/bin/grep -Eo 'mWakefulness=Awake|mWakefulness=Asleep' "
+                                        "| /system/bin/awk -F'=' '{print $2}'");
+
+    if (screenstate) [[clang::likely]] {
+        fetch_failed = 0;
+        return IS_AWAKE(screenstate);
     }
 
     fetch_failed++;
     log_zenith(LOG_ERROR, "Unable to fetch current screenstate");
 
-    if (fetch_failed >= 6) {
+    if (fetch_failed == 6) {
         log_zenith(LOG_FATAL, "get_screenstate is out of order!");
+
+        // Set default state after too many failures via function pointer
         get_screenstate = return_true;
     }
+
     return true;
 }
 
 /***********************************************************************************
  * Function Name      : get_low_power_state_normal
- * Description        : Checks Battery Saver status. The fallback method now parses
- * dumpsys output in C instead of using grep/awk.
+ * Inputs             : None
+ * Returns            : bool - true if Battery Saver is enabled
+ * false otherwise
+ * Description        : Checks if the device's Battery Saver mode is enabled by using
+ * global db or dumpsys power.
+ * Note               : In repeated failures up to 6, this function will skip fetch routine
+ * and just return false all time using function pointer.
+ * Never call this function, call get_low_power_state() instead.
  ***********************************************************************************/
 bool get_low_power_state_normal(void) {
     static char fetch_failed = 0;
-    char* low_power = execute_direct(SETTINGS_PATH, "settings", "get", "global", "low_power", NULL);
 
-    if (!low_power || strcmp(low_power, "null") == 0 || strlen(low_power) == 0) {
-        if (low_power) free(low_power);
-
-        // Revert to shell-based execution to ensure the correct environment is set up for dumpsys.
-        char* power_dump = execute_command("/system/bin/dumpsys power");
-        if (power_dump) {
-            char* setting = strstr(power_dump, "mSettingBatterySaverEnabled=");
-            if (setting) {
-                if (strstr(setting, "true")) {
-                    low_power = strdup("true");
-                } else {
-                    low_power = strdup("false");
-                }
-            } else {
-                // If parsing fails, log the output for debugging before freeing.
-                log_zenith(LOG_DEBUG, "get_low_power_state: Unexpected dumpsys output: %s", power_dump);
-                low_power = NULL;
-            }
-            free(power_dump);
-        } else {
-            low_power = NULL;
-        }
+    char* low_power = execute_direct("/system/bin/settings", "settings", "get", "global", "low_power", NULL);
+    if (!low_power) {
+        low_power = execute_command("/system/bin/dumpsys power | /vendor/bin/grep -Eo "
+                                    "'mSettingBatterySaverEnabled=true|mSettingBatterySaverEnabled=false' | "
+                                    "/system/bin/awk -F'=' '{print $2}'");
     }
 
     if (low_power) [[clang::likely]] {
         fetch_failed = 0;
-        bool result = IS_LOW_POWER(low_power);
-        free(low_power);
-        return result;
+        return IS_LOW_POWER(low_power);
     }
 
     fetch_failed++;
     log_zenith(LOG_ERROR, "Unable to fetch battery saver status");
 
-    if (fetch_failed >= 6) {
+    if (fetch_failed == 6) {
         log_zenith(LOG_FATAL, "get_low_power_state is out of order!");
+
+        // Set default state after too many failures via function pointer
         get_low_power_state = return_false;
     }
 
     return false;
 }
-
