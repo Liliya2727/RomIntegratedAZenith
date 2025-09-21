@@ -85,8 +85,8 @@ static void apply_profile(int profile) {
  * Function Name      : sync_game_profile_loop
  * Inputs             : get_transsion_game_mode
  * Description        : This function runs as long as a game is active. It polls the Game Space
- *                      mode every 2 seconds and applies the corresponding profile if it changes.
- *                      When the game exits, the loop terminates and the profile is reverted to normal.
+ * mode every 2 seconds and applies the corresponding profile if it changes.
+ * When the game exits, the loop terminates and the profile is reverted to normal.
  ***********************************************************************************/
 static void sync_game_profile_loop(void) {
     int last_known_profile = -1;
@@ -135,11 +135,11 @@ void run_profiler(const int profile) {
     // Perform a one-time check for Transsion Game Space support
     if (!gamespace_props_checked) {
         char* support_prop = execute_command("/system/bin/getprop persist.sys.azenith.syncgamespace.support");
-        char* is_transsion_prop = execute_command("/system/bin/getprop ro.product.brand");
+        char* is_transsion_prop = execute_command("/system/bin/getprop persist.sys.azenith.issupportgamespace");
 
         if (support_prop && is_transsion_prop &&
             strncmp(support_prop, "1", 1) == 0 &&
-            (strncmp(is_transsion_prop, "TECNO", 5) == 0 || strncmp(is_transsion_prop, "Infinix", 7) == 0 || strncmp(is_transsion_prop, "itel", 4) == 0)) {
+            strncmp(is_transsion_prop, "transsion", 9) == 0) {
             transsion_gamespace_support = true;
             log_zenith(LOG_INFO, "Transsion Game Space sync is supported and enabled.");
         }
@@ -240,3 +240,4 @@ bool get_low_power_state_normal(void) {
 
     return false;
 }
+
