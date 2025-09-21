@@ -15,8 +15,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 #
-
-# shellcheck disable=SC2013
 # Add for debug prop
 AZLog() {
 	if [ "$(getprop persist.sys.azenith-debug)" = "true" ]; then
@@ -97,17 +95,17 @@ zeshiax() {
 }
 
 setfreq() {
-	local file="$1" target="$2" chosen=""
-	if [ -f "$file" ]; then
-		chosen=$(tr -s ' ' '\n' <"$file" |
-			awk -v t="$target" '
+    local file="$1" target="$2" chosen=""
+    if [ -f "$file" ]; then
+        chosen=$(/system/bin/tr -s ' ' '\n' <"$file" |
+            /system/bin/awk -v t="$target" '
                 {diff = (t - $1 >= 0 ? t - $1 : $1 - t)}
                 NR==1 || diff < mindiff {mindiff = diff; val=$1}
                 END {print val}')
-	else
-		chosen="$target"
-	fi
-	/system/bin/echo "$chosen"
+    else
+        chosen="$target"
+    fi
+    /system/bin/echo "$chosen"
 }
 
 setgov() {
@@ -248,8 +246,6 @@ balanced_profile() {
 
 	# CPU Max Time Percent
 	zeshia 100 /proc/sys/kernel/perf_cpu_time_max_percent
-
-	zeshia 2 /proc/sys/kernel/perf_cpu_time_max_percent
 	# Sched Energy Aware
 	zeshia 1 /proc/sys/kernel/sched_energy_aware
 
