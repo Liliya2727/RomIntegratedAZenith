@@ -15,14 +15,16 @@
  */
 #include <AZenith.h>
 #include <errno.h>  // For errno
-#include <string.h> // For strerror()
+#include <stdio.h>  // For snprintf
 #include <stdlib.h> // For general utilities
+#include <string.h> // For strerror()
 #include <sys/system_properties.h> // For native property access
 
 // Define binary paths for easier maintenance
-// #define DUMPSYS_PATH  "/system/bin/dumpsys" // Removed to use hardcoded path directly
+#define DUMPSYS_PATH  "/system/bin/dumpsys"
 #define PROFILER_PATH "/vendor/bin/AZenith_Profiler"
 #define SETTINGS_PATH "/system/bin/settings"
+#define SHELL_PATH    "/system/bin/sh"
 
 void setup_path(void) {
     int result = setenv("PATH",
@@ -65,7 +67,9 @@ static char* get_prop(const char* prop) {
 
 // Get game mode from Transsion's Game Space
 static int get_transsion_game_mode(void) {
-    char* mode_str = execute_direct(SETTINGS_PATH, "settings", "get", "secure", "transsion_game_function_mode", NULL);
+    char command[256];
+    snprintf(command, sizeof(command), "%s -c \"%s get secure transsion_game_function_mode\"", SHELL_PATH, SETTINGS_PATH);
+    char* mode_str = execute_command(command);
     int final_mode = -1;
 
     if (mode_str) {
@@ -160,7 +164,7 @@ void run_profiler(const int profile) {
 }
 
 /***********************************************************************************
- * Helper Function    : read_gamelist
+ * Helper Function      : read_gamelist
  * Description        : Reads package names from the GAMELIST file into a dynamically
  * allocated array of strings.
  * Returns            : The number of packages read. Caller is responsible for
@@ -210,8 +214,9 @@ char* get_gamestart(void) {
     int game_count = read_gamelist(&game_packages);
     if (game_count == 0) return NULL;
 
-    // Hardcode the full path to ensure the correct binary is executed, bypassing any PATH issues.
-    char* visible_apps = execute_direct("/system/bin/dumpsys", "dumpsys", "window", "visible-apps", NULL);
+    char command[256];
+    snprintf(command, sizeof(command), "%s -c \"%s window visible-apps\"", SHELL_PATH, DUMPSYS_PATH);
+    char* visible_apps = execute_command(command);
     char* found_game_package = NULL;
 
     if (visible_apps) {
@@ -255,8 +260,9 @@ cleanup:
  ***********************************************************************************/
 bool get_screenstate_normal(void) {
     static char fetch_failed = 0;
-    // Hardcode the full path to ensure the correct binary is executed, bypassing any PATH issues.
-    char* power_dump = execute_direct("/system/bin/dumpsys", "dumpsys", "power", NULL);
+    char command[256];
+    snprintf(command, sizeof(command), "%s -c \"%s power\"", SHELL_PATH, DUMPSYS_PATH);
+    char* power_dump = execute_command(command);
 
     if (power_dump) {
         char* wakefulness = strstr(power_dump, "mWakefulness=");
@@ -288,13 +294,15 @@ bool get_screenstate_normal(void) {
  ***********************************************************************************/
 bool get_low_power_state_normal(void) {
     static char fetch_failed = 0;
-    char* low_power = execute_direct(SETTINGS_PATH, "settings", "get", "global", "low_power", NULL);
+    char command[256];
+    snprintf(command, sizeof(command), "%s -c \"%s get global low_power\"", SHELL_PATH, SETTINGS_PATH);
+    char* low_power = execute_command(command);
 
     if (!low_power || strcmp(low_power, "null") == 0 || strlen(low_power) == 0) {
         if (low_power) free(low_power);
 
-        // Hardcode the full path 
-        char* power_dump = execute_direct("/system/bin/dumpsys", "dumpsys", "power", NULL);
+        snprintf(command, sizeof(command), "%s -c \"%s power\"", SHELL_PATH, DUMPSYS_PATH);
+        char* power_dump = execute_command(command);
         if (power_dump) {
             char* setting = strstr(power_dump, "mSettingBatterySaverEnabled=");
             if (setting) {
@@ -331,4 +339,3 @@ bool get_low_power_state_normal(void) {
 
     return false;
 }
-
