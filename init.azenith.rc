@@ -1,16 +1,18 @@
 # Define Service
 service AZenith /vendor/bin/hw/vendor.azenith-service
-    seclabel u:r:init:s0
+	#seclabel u:r:init:s0 #use init seclabel if you are lazy to add the new domain
+    seclabel u:r:azenith_service:s0
     class main
     user root
-    group root mediadrm media_rw sdcard_rw media system sdcard_r
+    group root system sdcard_r sdcard_rw media_rw
     disabled
 
+# One-shot service to create config files on first boot
 service AZenith_prep /vendor/bin/AZenith_config
-    seclabel u:r:shell:s0
+    seclabel u:r:vendor_init:s0
     class late_start
     user root
-    group mediadrm media_rw sdcard_rw media system sdcard_r
+    group root system sdcard_r sdcard_rw media_rw
     oneshot
     disabled
 
