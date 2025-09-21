@@ -47,22 +47,8 @@ bool (*get_low_power_state)(void) = get_low_power_state_normal;
 static bool transsion_gamespace_support = false;
 static bool gamespace_props_checked = false;
 
-<<<<<<< HEAD
 // Use the modern NDK functions to support keys longer than 31 chars.
-=======
-// Helper callback for reading long property values.
-// The cookie is a pointer to a char* (i.e., char**).
-static void prop_read_callback(void* cookie, const char* name, const char* value, uint32_t serial) {
-    char** value_ptr = (char**)cookie;
-    if (value != NULL) {
-        *value_ptr = strdup(value);
-    }
-}
-
-// Use the modern callback-based property get to support keys longer than 31 chars.
->>>>>>> 1184a5360c8ca4b55237f903a0340a87e9f0affe
 static char* get_prop(const char* prop) {
-<<<<<<< HEAD
     const prop_info* pi = __system_property_find(prop);
     if (pi == NULL) {
         return NULL; // Property does not exist
@@ -71,28 +57,9 @@ static char* get_prop(const char* prop) {
     char value[PROP_VALUE_MAX];
     if (__system_property_read(pi, NULL, value) > 0) {
         return strdup(value);
-=======
-    const prop_info* pi = __system_property_find(prop);
-    if (pi == NULL) {
-        return NULL; // Property does not exist
->>>>>>> 1184a5360c8ca4b55237f903a0340a87e9f0affe
     }
-<<<<<<< HEAD
 
     return strdup(""); // Return empty string if property exists but has no value
-=======
-
-    char* value = NULL;
-    __system_property_read_callback(pi, prop_read_callback, &value);
-
-    // If property was found but is empty, the callback won't allocate.
-    // strdup("") to maintain consistent behavior where an empty string is returned.
-    if (value == NULL) {
-        return strdup("");
-    }
-    
-    return value;
->>>>>>> 1184a5360c8ca4b55237f903a0340a87e9f0affe
 }
 
 
