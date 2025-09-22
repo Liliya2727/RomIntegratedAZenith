@@ -4,15 +4,17 @@ service AZenith /vendor/bin/hw/vendor.azenith-service
     seclabel u:r:azenith_service:s0
     class main
     user root
-    group root system sdcard_r sdcard_rw media_rw
+    group root system shell readproc sdcard_r sdcard_rw media_rw
+    capability SYS_NICE SYS_ADMIN NET_ADMIN
     disabled
+    socket zygote stream 660 root system
 
 # One-shot service to create config files on first boot
 service AZenith_prep /vendor/bin/AZenith_config
     seclabel u:r:vendor_init:s0
     class late_start
     user root
-    group root system sdcard_r sdcard_rw media_rw
+    group root system shell sdcard_r sdcard_rw media_rw
     oneshot
     disabled
 
@@ -22,3 +24,4 @@ on property:sys.boot_completed=1 && property:persist.sys.azenith.state=1
 
 on property:sys.azenith.config=ready && property:persist.sys.azenith.state=1
     start AZenith
+
