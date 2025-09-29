@@ -5,7 +5,7 @@ service AZenith /vendor/bin/hw/vendor.azenith-service
     class main
     user root
     group root system shell readproc sdcard_r sdcard_rw media_rw
-    capability SYS_NICE SYS_ADMIN NET_ADMIN
+    capability SYS_NICE DAC_OVERRIDE KILL SYS_ADMIN NET_ADMIN SYS_PTRACE
     disabled
     socket zygote stream 660 root system
 
@@ -25,3 +25,12 @@ on property:sys.boot_completed=1 && property:persist.sys.azenith.state=1
 on property:sys.azenith.config=ready && property:persist.sys.azenith.state=1
     start AZenith
 
+# Restart azenith to remove the need of REBOOT when Property changes.
+on property:persist.sys.azenith.syncgamespace.support=*
+	restart AZenith
+	
+on property:persist.sys.azenithconf.cpulimit=*
+	restart AZenith
+	
+on property:persist.sys.azenithconf.gpreload=*
+	restart AZenith

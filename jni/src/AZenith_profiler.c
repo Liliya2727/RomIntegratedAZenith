@@ -17,12 +17,8 @@
 #include <errno.h>
 #include <string.h>
 #include <stdlib.h>
-#include <unistd.h> // Required for fork(), sleep(), _exit()
-
-// Define binary path needed for get_transsion_game_mode
+#include <unistd.h>
 #define SETTINGS_PATH "/system/bin/settings"
-
-// Forward declarations
 static void apply_profile(int profile);
 char* get_gamestart(void);
 
@@ -44,7 +40,7 @@ void setup_path(void) {
     }
 }
 
-// Get game mode from Transsion's Game Space (Unchanged)
+// Get game mode from Transsion's Game Space
 static int get_transsion_game_mode(void) {
     char* mode_str = execute_direct(SETTINGS_PATH, "settings", "get", "secure", "transsion_game_function_mode", NULL);
     int final_mode = -1;
@@ -111,7 +107,7 @@ static void sync_game_profile_loop(void) {
 }
 
 void run_profiler(const int profile) {
-    // Perform a one-time check for Transsion Game Space support
+    // cCheck for Transsion Game Space support
     if (!gamespace_props_checked) {
         char* support_prop = execute_command("/system/bin/getprop persist.sys.azenith.syncgamespace.support");
         char* is_transsion_prop = execute_command("/system/bin/getprop persist.sys.azenith.issupportgamespace");
@@ -129,40 +125,34 @@ void run_profiler(const int profile) {
     }
 
     if (profile == 1) {
-        // A game has been launched. Set the info property.
         char gameinfo_prop[256];
         snprintf(gameinfo_prop, sizeof(gameinfo_prop), "%s %d %d", gamestart, game_pid, uidof(game_pid));
         systemv("/vendor/bin/setprop sys.azenith.gameinfo \"%s\"", gameinfo_prop);
-
+        // Fork if trangamespace support
         if (transsion_gamespace_support) {
             pid_t pid = fork();
 
             if (pid < 0) {
-                // Fork failed, fall back to basic behavior
                 log_zenith(LOG_ERROR, "Failed to fork for game session monitoring.");
                 apply_profile(1);
                 return;
             }
 
             if (pid > 0) {
-                // This is the parent process.
-                // Log the child PID and return immediately to not block the caller.
                 log_zenith(LOG_INFO, "Forked child process %d to monitor game session.", pid);
                 return;
             }
 
-            // This is the child process. It will now run the monitoring loop.
             log_zenith(LOG_INFO, "Child process started for real-time sync.");
             sync_game_profile_loop(); // This function blocks until the game exits foreground.
             _exit(0); // IMPORTANT: Use _exit() to terminate the child process.
 
         } else {
-            // Standard behavior without Transsion sync: apply performance profile and exit.
+            // If no trangamesupport
             log_zenith(LOG_INFO, "Game detected. Applying default performance profile.");
             apply_profile(1);
         }
     } else {
-        // A non-game profile is requested (e.g., normal, powersave)
         systemv("/vendor/bin/setprop sys.azenith.gameinfo \"NULL 0 0\"");
         apply_profile(profile);
     }
