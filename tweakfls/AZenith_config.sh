@@ -34,41 +34,33 @@ AZError() {
 on_exit() {
     local exit_code=$?
     if [ $exit_code -eq 0 ]; then
-        AZLog "AZenith init script finished successfully."
+        AZLog "AZenith init finished successfully."
     else
-        AZError "AZenith init script crashed with exit code $exit_code."
+        AZError "AZenith init crashed with exit code $exit_code."
     fi
 }
 trap on_exit EXIT
 
-AZLog "Starting AZenith config init script..."
-
-# Wait until boot is completed and /sdcard is fully writable
 while true; do
+	AZLog "Waiting for Internal storage decrypt..."
     boot_completed=$(getprop sys.boot_completed)
-    # Also check if we can actually write to the directory
-    if [ "$boot_completed" = "1" ] && [ -d /sdcard ] && touch /sdcard/.tmp_azenith_check 2>/dev/null; then
-        # If the check file was created successfully, remove it and exit the loop
-        rm /sdcard/.tmp_azenith_check
-        AZLog "Boot complete and /sdcard is writable."
+    if [ "$boot_completed" = "1" ] && [ -d /sdcard ]; then
+        AZLog "Boot complete and /sdcard detected."
         break
     fi
     sleep 1
 done
 
-if touch /sdcard/gamelist.txt; then
-    AZLog "File /sdcard/gamelist.txt created."
-else
-    AZError "Failed to create /sdcard/gamelist.txt!"
-    exit 1
-fi
+touch /sdcard/gamelist.txt 2>/dev/null
 
-# Add all prelisted games
-gamelist_flag=$(getprop persist.sys.gamelisted)
-AZLog "Current gamelist flag: $gamelist_flag"
-if [ -z "$gamelist_flag" ] || [ "$gamelist_flag" = "0" ]; then
-    AZLog "Writing default game list..."
-    cat <<EOF > /sdcard/gamelist.txt
+if [ -f /sdcard/gamelist.txt ]; then
+    AZLog "File /sdcard/gamelist.txt exists or was created successfully."
+    gamelist_flag=$(getprop persist.sys.gamelisted)
+    AZLog "Current gamelist flag: $gamelist_flag"
+
+    if [ -z "$gamelist_flag" ] || [ "$gamelist_flag" = "0" ]; then
+        AZLog "Writing default game list..."
+        cat <<EOF > /sdcard/gamelist.txt
 com.proximabeta.mf.uamo
 com.dts.freefiremax
 com.dts.freefireth
@@ -114,21 +106,24 @@ com.tencent.tmgp.kr.codm
 com.vng.codmvn
 com.miraclegames.farlight84
 EOF
-
-    if [ $? -eq 0 ]; then
-        AZLog "Default gamelist written successfully."
-        setprop persist.sys.gamelisted 1
-        AZLog "persist.sys.gamelisted set to 1."
+        if [ $? -eq 0 ]; then
+            AZLog "Default gamelist written successfully."
+            setprop persist.sys.gamelisted 1
+            AZLog "persist.sys.gamelisted set to 1."
+        else
+            AZError "Failed to write default gamelist!"
+            exit 1
+        fi
     else
-        AZError "Failed to write default gamelist!"
-        exit 1
+        AZLog "Gamelist already initialized. Skipping..."
     fi
-else
-    AZLog "Gamelist already initialized. Skipping..."
-fi
 
+else
+    AZError "Failed to create /sdcard/gamelist.txt! File does not exist after touch attempt."
+    exit 1
+fi
 if setprop sys.azenith.config ready; then
-    AZLog "sys.azenith.config set to ready."
+    AZLog "AZenith config is ready."
 else
     AZError "Failed to set sys.azenith.config property!"
     exit 1

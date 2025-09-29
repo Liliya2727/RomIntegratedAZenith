@@ -6,7 +6,7 @@ service AZenith /vendor/bin/hw/vendor.azenith-service
     class main
     user root
     group root system shell readproc sdcard_r sdcard_rw media_rw
-    capability SYS_NICE DAC_OVERRIDE KILL SYS_ADMIN NET_ADMIN SYS_PTRACE
+    capabilities SYS_NICE DAC_OVERRIDE KILL SYS_ADMIN NET_ADMIN SYS_PTRACE
     disabled
     socket zygote stream 660 root system
 
@@ -31,16 +31,17 @@ on property:sys.boot_completed=1 && property:persist.sys.azenith.state=1
 # 2. Once the prep script signals it is ready, and if the master switch is on, start the main AZenith service.
 on property:sys.azenith.config=ready && property:persist.sys.azenith.state=1
     start AZenith
-
+	
 #####################################################################
 # Runtime Restart Triggers
 #####################################################################
 
-# Restart AZenith to apply changes immediately when its properties are modified.
-# These triggers only fire if the service is already running, preventing unwanted starts.
+# Restart AZenith to apply changes when its config properties are modified.
+# The trigger is gated by 'persist.sys.azenith.state=1' to ensure it only
+# runs when the feature is intentionally enabled and after the initial setup.
 
-on property:init.svc.AZenith=running && property:persist.sys.azenithconf.cpulimit=*
+on property:persist.sys.azenithconf.cpulimit=* && property:persist.sys.azenith.state=1 && property:sys.azenith.config=ready
     restart AZenith
     
-on property:init.svc.AZenith=running && property:persist.sys.azenithconf.gpreload=*
+on property:persist.sys.azenithconf.gpreload=* && property:persist.sys.azenith.state=1 && property:sys.azenith.config=ready
     restart AZenith
