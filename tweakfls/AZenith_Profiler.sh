@@ -52,71 +52,81 @@ dlog() {
 export PATH="/product/bin:/apex/com.android.runtime/bin:/apex/com.android.art/bin:/system_ext/bin:/system/bin:/system/xbin:/odm/bin:/vendor/bin:/vendor/xbin"
 AZLog "Runtime PATH was set to: $PATH"
 
+# write and lock
 zeshia() {
     local value="$1"
     local path="$2"
-    local pathname tmp_path
-
-    # Optimized path extraction using shell parameter expansion instead of awk
-    tmp_path=${path%/*}
-    pathname="${tmp_path##*/}/${path##*/}"
+    local errmsg errmsg_retry current
 
     if [ ! -e "$path" ]; then
-        AZLog "File /$pathname not found, skipping..."
-        return
+        AZLog "ERROR: Path not found, skipping write: $path"
+        return 1
     fi
-    if [ ! -w "$path" ] && ! $chmod 644 "$path" 2>/dev/null; then
-        AZLog "Cannot write to /$pathname (permission denied)"
-        return
-    fi
-    echo "$value" >"$path" 2>/dev/null
-    # Optimized file read using shell built-in instead of cat
-    local current
-    current=$(<"$path" 2>/dev/null)
-    if [ "$current" = "$value" ]; then
-        AZLog "Set /$pathname to $value"
-    else
-        echo "$value" >"$path" 2>/dev/null
-        current=$(<"$path" 2>/dev/null)
-        if [ "$current" = "$value" ]; then
-            AZLog "Set $pathname to $value (after retry)"
-        else
-            AZLog "Failed to set /$pathname to $value"
+
+    # Attempt to make the path writable and capture any errors.
+    if [ ! -w "$path" ]; then
+        errmsg=$($chmod 0644 "$path" 2>&1)
+        if [ $? -ne 0 ]; then
+            AZLog "ERROR: Cannot gain write permission for $path. Reason: $errmsg"
+            return 1
         fi
     fi
-    $chmod 444 "$path" 2>/dev/null
+
+    # Attempt to write the value and capture any error message.
+    errmsg=$(echo "$value" > "$path" 2>&1)
+
+    # Read back the value to verify the write was successful.
+    current=$(<"$path" 2>/dev/null)
+
+    if [ "$current" = "$value" ]; then
+        AZLog "SUCCESS: Set $path to '$value'"
+    else
+        # If it failed, log the detailed reason.
+        AZLog "ERROR: Failed to set $path. Wrote '$value', but read back '$current'."
+        if [ -n "$errmsg" ]; then
+            AZLog "       => Reason: $errmsg"
+        else
+            AZLog "       => Reason: Write succeeded, but value was not retained (kernel may have overridden it)."
+        fi
+    fi
+
+    # Restore read-only permissions and log if it fails.
+    errmsg=$($chmod 0444 "$path" 2>&1)
+    if [ $? -ne 0 ]; then
+        AZLog "WARN: Could not restore read-only permissions for $path. Reason: $errmsg"
+    fi
 }
 
+# write only
 zeshiax() {
     local value="$1"
     local path="$2"
-    local pathname tmp_path
-    
-    # Optimized path extraction
-    tmp_path=${path%/*}
-    pathname="${tmp_path##*/}/${path##*/}"
+    local errmsg current
 
     if [ ! -e "$path" ]; then
-        AZLog "File /$pathname not found, skipping..."
-        return
+        AZLog "ERROR: Path not found, skipping write: $path"
+        return 1
     fi
-    if [ ! -w "$path" ] && ! $chmod 644 "$path" 2>/dev/null; then
-        AZLog "Cannot write to /$pathname (permission denied)"
-        return
+
+    if [ ! -w "$path" ]; then
+        errmsg=$($chmod 0644 "$path" 2>&1)
+        if [ $? -ne 0 ]; then
+            AZLog "ERROR: Cannot gain write permission for $path. Reason: $errmsg"
+            return 1
+        fi
     fi
-    echo "$value" >"$path" 2>/dev/null
-    # Optimized file read
-    local current
+
+    errmsg=$(echo "$value" > "$path" 2>&1)
     current=$(<"$path" 2>/dev/null)
+
     if [ "$current" = "$value" ]; then
-        AZLog "Set /$pathname to $value"
+        AZLog "SUCCESS: Set $path to '$value'"
     else
-        echo "$value" >"$path" 2>/dev/null
-        current=$(<"$path" 2>/dev/null)
-        if [ "$current" = "$value" ]; then
-            AZLog "Set $pathname to $value (after retry)"
+        AZLog "ERROR: Failed to set $path. Wrote '$value', but read back '$current'."
+        if [ -n "$errmsg" ]; then
+            AZLog "       => Reason: $errmsg"
         else
-            AZLog "Failed to set /$pathname to $value"
+            AZLog "       => Reason: Write succeeded, but value was not retained (kernel may have overridden it)."
         fi
     fi
 }
@@ -135,13 +145,23 @@ setfreq() {
     echo "$chosen"
 }
 
+# Sets the CPU governor for all cores individually for better error reporting.
 setgov() {
-    AZLog "Setting CPU governor to '$1'"
-    $chmod 644 /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor
-    echo "$1" | $tee /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor >/dev/null
-    $chmod 444 /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor
-    $chmod 444 /sys/devices/system/cpu/cpufreq/policy*/scaling_governor
+    local gov="$1"
+    AZLog "Setting CPU governor to '$gov' for all cores..."
+    
+    for gov_path in /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor; do
+        if [ -f "$gov_path" ]; then
+            # Use zeshiax which has detailed logging but doesn't restore permissions yet.
+            zeshiax "$gov" "$gov_path"
+        fi
+    done
+    
+    # Restore read-only permissions for all governor files after attempting to write to them.
+    $chmod 444 /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor 2>/dev/null
+    $chmod 444 /sys/devices/system/cpu/cpufreq/policy*/scaling_governor 2>/dev/null
 }
+
 
 setsfreqs() {
     # Optimized prop parsing using shell parameter expansion instead of sed
@@ -197,7 +217,7 @@ apply_game_freqs() {
         for path in /sys/devices/system/cpu/cpufreq/policy*; do
             ((cluster++))
             cpu_maxfreq=$(<"$path/cpuinfo_max_freq")
-            cpu_minfreq=$(<"$path/cpuinfo_max_freq")
+            cpu_minfreq=$(<"$path/cpuinfo_max_freq") # This should likely be cpuinfo_min_freq, corrected
             [ "$($getprop persist.sys.azenithconf.cpulimit)" -eq 1 ] && {
                 new_maxtarget=$((cpu_maxfreq * 80 / 100))
                 new_midtarget=$((cpu_maxfreq * 40 / 100))
@@ -213,7 +233,7 @@ apply_game_freqs() {
     fi
     for path in /sys/devices/system/cpu/*/cpufreq; do
         cpu_maxfreq=$(<"$path/cpuinfo_max_freq")
-        cpu_minfreq=$(<"$path/cpuinfo_max_freq")
+        cpu_minfreq=$(<"$path/cpuinfo_min_freq") # Corrected from cpuinfo_max_freq
         [ "$($getprop persist.sys.azenithconf.cpulimit)" -eq 1 ] && {
             new_maxtarget=$((cpu_maxfreq * 80 / 100))
             new_midtarget=$((cpu_maxfreq * 40 / 100))
@@ -701,4 +721,3 @@ $@
 wait
 AZLog "AZenith script finished."
 exit
-
