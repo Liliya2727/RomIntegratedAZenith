@@ -1,7 +1,8 @@
-# Define Service
+# Define the main AZenith service daemon
 service AZenith /vendor/bin/hw/vendor.azenith-service
-	#seclabel u:r:init:s0 #use init seclabel if you are lazy to add the new domain
+    # SELinux context for the service
     seclabel u:r:azenith_service:s0
+	#seclabel u:r:init:s0
     class main
     user root
     group root system shell readproc sdcard_r sdcard_rw media_rw
@@ -9,7 +10,7 @@ service AZenith /vendor/bin/hw/vendor.azenith-service
     disabled
     socket zygote stream 660 root system
 
-# One-shot service to create config files on first boot
+# Define the one-shot service to create config files on first boot
 service AZenith_prep /vendor/bin/AZenith_config
     seclabel u:r:vendor_init:s0
     class late_start
@@ -18,19 +19,28 @@ service AZenith_prep /vendor/bin/AZenith_config
     oneshot
     disabled
 
-# Prep conf files and start service daemon
+#####################################################################
+# Startup Trigger Sequence
+#####################################################################
+
+# 1. After boot is complete, and if the master switch is on, run the prep script.
+#    The prep script should create necessary files and then set the property 'sys.azenith.config=ready'
 on property:sys.boot_completed=1 && property:persist.sys.azenith.state=1
     start AZenith_prep
 
+# 2. Once the prep script signals it is ready, and if the master switch is on, start the main AZenith service.
 on property:sys.azenith.config=ready && property:persist.sys.azenith.state=1
     start AZenith
 
-# Restart azenith to remove the need of REBOOT when Property changes.
-on property:persist.sys.azenith.syncgamespace.support=*
-	restart AZenith
-	
-on property:persist.sys.azenithconf.cpulimit=*
-	restart AZenith
-	
-on property:persist.sys.azenithconf.gpreload=*
-	restart AZenith
+#####################################################################
+# Runtime Restart Triggers
+#####################################################################
+
+# Restart AZenith to apply changes immediately when its properties are modified.
+# These triggers only fire if the service is already running, preventing unwanted starts.
+
+on property:init.svc.AZenith=running && property:persist.sys.azenithconf.cpulimit=*
+    restart AZenith
+    
+on property:init.svc.AZenith=running && property:persist.sys.azenithconf.gpreload=*
+    restart AZenith
