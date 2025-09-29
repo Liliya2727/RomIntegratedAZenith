@@ -8,7 +8,8 @@ Developed By @Zexshia and @rianixia on telegram
 3. Place AZenith_Profiler and AZenith_config to /vendor/bin/
 4. Patch vendor sepolicy
 5. In /vendor/build.prop add "persist.sys.azenith.state" prop value 1 for enabled, and value 0 for disabled
-6. Repack Vendor
+6. To enable other tweaks refer to the properties list
+7. Repack Vendor
 
 # How add your app packages?
 1. Create the file gamelist.txt on /sdcard/gamelist.txt
