@@ -56,14 +56,13 @@ AZLog "Runtime PATH was set to: $PATH"
 zeshia() {
     local value="$1"
     local path="$2"
-    local errmsg errmsg_retry current
+    local errmsg current is_success
 
     if [ ! -e "$path" ]; then
         AZLog "ERROR: Path not found, skipping write: $path"
         return 1
     fi
 
-    # Attempt to make the path writable and capture any errors.
     if [ ! -w "$path" ]; then
         errmsg=$($chmod 0644 "$path" 2>&1)
         if [ $? -ne 0 ]; then
@@ -72,25 +71,29 @@ zeshia() {
         fi
     fi
 
-    # Attempt to write the value and capture any error message.
-    errmsg=$(echo "$value" > "$path" 2>&1)
-
-    # Read back the value to verify the write was successful.
+    errmsg=$(echo -n "$value" > "$path" 2>&1)
     current=$(<"$path" 2>/dev/null)
 
+    is_success=false
     if [ "$current" = "$value" ]; then
+        is_success=true
+    else
+        case "$current" in
+            *"$value"*) is_success=true ;;
+        esac
+    fi
+
+    if [ "$is_success" = "true" ]; then
         AZLog "SUCCESS: Set $path to '$value'"
     else
-        # If it failed, log the detailed reason.
         AZLog "ERROR: Failed to set $path. Wrote '$value', but read back '$current'."
         if [ -n "$errmsg" ]; then
             AZLog "       => Reason: $errmsg"
         else
-            AZLog "       => Reason: Write succeeded, but value was not retained (kernel may have overridden it)."
+            AZLog "       => Reason: Write may have succeeded, but verification failed (kernel may have overridden it or reports a different format)."
         fi
     fi
 
-    # Restore read-only permissions and log if it fails.
     errmsg=$($chmod 0444 "$path" 2>&1)
     if [ $? -ne 0 ]; then
         AZLog "WARN: Could not restore read-only permissions for $path. Reason: $errmsg"
@@ -101,7 +104,7 @@ zeshia() {
 zeshiax() {
     local value="$1"
     local path="$2"
-    local errmsg current
+    local errmsg current is_success
 
     if [ ! -e "$path" ]; then
         AZLog "ERROR: Path not found, skipping write: $path"
@@ -116,17 +119,26 @@ zeshiax() {
         fi
     fi
 
-    errmsg=$(echo "$value" > "$path" 2>&1)
+    errmsg=$(echo -n "$value" > "$path" 2>&1)
     current=$(<"$path" 2>/dev/null)
 
+    is_success=false
     if [ "$current" = "$value" ]; then
+        is_success=true
+    else
+        case "$current" in
+            *"$value"*) is_success=true ;;
+        esac
+    fi
+
+    if [ "$is_success" = "true" ]; then
         AZLog "SUCCESS: Set $path to '$value'"
     else
         AZLog "ERROR: Failed to set $path. Wrote '$value', but read back '$current'."
         if [ -n "$errmsg" ]; then
             AZLog "       => Reason: $errmsg"
         else
-            AZLog "       => Reason: Write succeeded, but value was not retained (kernel may have overridden it)."
+            AZLog "       => Reason: Write may have succeeded, but verification failed (kernel may have overridden it or reports a different format)."
         fi
     fi
 }
