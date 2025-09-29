@@ -43,11 +43,14 @@ trap on_exit EXIT
 
 AZLog "Starting AZenith config init script..."
 
-# Wait until boot is completed and /sdcard mounted
+# Wait until boot is completed and /sdcard is fully writable
 while true; do
     boot_completed=$(getprop sys.boot_completed)
-    if [ "$boot_completed" = "1" ] && [ -d /sdcard ]; then
-        AZLog "Boot complete and /sdcard detected."
+    # Also check if we can actually write to the directory
+    if [ "$boot_completed" = "1" ] && [ -d /sdcard ] && touch /sdcard/.tmp_azenith_check 2>/dev/null; then
+        # If the check file was created successfully, remove it and exit the loop
+        rm /sdcard/.tmp_azenith_check
+        AZLog "Boot complete and /sdcard is writable."
         break
     fi
     sleep 1
