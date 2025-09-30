@@ -45,3 +45,6 @@ on property:persist.sys.azenithconf.cpulimit=* && property:persist.sys.azenith.s
     
 on property:persist.sys.azenithconf.gpreload=* && property:persist.sys.azenith.state=1 && property:sys.azenith.config=ready
     restart AZenith
+
+on property:persist.sys.azenithconf.freqoffset=* && property:persist.sys.azenith.state=1 && property:sys.azenith.config=ready
+    restart AZenith

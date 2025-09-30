@@ -19,7 +19,6 @@
 #include <stdlib.h>
 #include <unistd.h> 
 
-// Forward declarations
 static void apply_profile(int profile);
 char* get_gamestart(void);
 
@@ -30,11 +29,9 @@ void setup_path(void) {
                         1 /* overwrite existing value */
     );
 
-    // Check the return value of setenv
     if (result == 0) {
         log_zenith(LOG_INFO, "PATH environment variable set successfully.");
     } else {
-        // If it fails, log the specific error from the system
         log_zenith(LOG_ERROR, "Failed to set PATH environment variable: %s", strerror(errno));
     }
 }
@@ -121,8 +118,6 @@ bool get_screenstate_normal(void) {
 
     if (fetch_failed == 6) {
         log_zenith(LOG_FATAL, "get_screenstate is out of order!");
-
-        // Set default state after too many failures via function pointer
         get_screenstate = return_true;
     }
 
@@ -160,8 +155,6 @@ bool get_low_power_state_normal(void) {
 
     if (fetch_failed == 6) {
         log_zenith(LOG_FATAL, "get_low_power_state is out of order!");
-
-        // Set default state after too many failures via function pointer
         get_low_power_state = return_false;
     }
 

@@ -176,7 +176,6 @@ setgov() {
 
 
 setsfreqs() {
-    # Optimized prop parsing using shell parameter expansion instead of sed
     local prop_val limiter curprofile
     prop_val=$($getprop persist.sys.azenithconf.freqoffset)
     tmp=${prop_val//Disabled/100}
@@ -476,8 +475,6 @@ performance_profile() {
     clear_background_apps() {
         AZLog "Clearing background apps..."
 
-        # This function is inherently slow due to its reliance on many external tools.
-        # The logic is complex and kept as-is to ensure functionality.
         app_list=$($top -n 1 -o %CPU | $awk 'NR>7 {print $1}' | while read -r pid; do
             pkg=$($cmd package list packages -U | $awk -v pid="$pid" '$2 == pid {print $1}' | $cut -d':' -f2)
             if [ -n "$pkg" ]; then
