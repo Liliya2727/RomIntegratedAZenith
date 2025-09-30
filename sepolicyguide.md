@@ -15,7 +15,7 @@ We need to define new **types** and **attributes** for:
 These definitions belong in:
 
 ```
-/vendor/etc/selinux/vendor_sepolicy.cil
+/vendor/etc/selinux/[vendor_sepolicy.cil](vendor_sepolicy.cil)
 ```
 
 ### Attribute Declarations
@@ -93,8 +93,4 @@ Example denials might include:
 
 Keep iterating until all legitimate functionality works without `avc: denied` spam.
 
-#### Example found denials on Transsion Device, for other device should adjust accordingly or simply use your own
-```
-[vendor_sepolicy.cil]
-```
----
+# Good luck.
