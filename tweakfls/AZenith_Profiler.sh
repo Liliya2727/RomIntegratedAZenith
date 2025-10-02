@@ -185,7 +185,6 @@ setsfreqs() {
     if [ -d /proc/ppm ]; then
         cluster=0
         for path in /sys/devices/system/cpu/cpufreq/policy*; do
-            # Optimized file reads
             cpu_maxfreq=$(<"$path/cpuinfo_max_freq")
             cpu_minfreq=$(<"$path/cpuinfo_min_freq")
             new_max_target=$((cpu_maxfreq * limiter / 100))
@@ -228,7 +227,7 @@ apply_game_freqs() {
         for path in /sys/devices/system/cpu/cpufreq/policy*; do
             ((cluster++))
             cpu_maxfreq=$(<"$path/cpuinfo_max_freq")
-            cpu_minfreq=$(<"$path/cpuinfo_max_freq") # This should likely be cpuinfo_min_freq, corrected
+            cpu_minfreq=$(<"$path/cpuinfo_max_freq")
             [ "$($getprop persist.sys.azenithconf.cpulimit)" -eq 1 ] && {
                 new_maxtarget=$((cpu_maxfreq * 80 / 100))
                 new_midtarget=$((cpu_maxfreq * 40 / 100))
@@ -244,7 +243,7 @@ apply_game_freqs() {
     fi
     for path in /sys/devices/system/cpu/*/cpufreq; do
         cpu_maxfreq=$(<"$path/cpuinfo_max_freq")
-        cpu_minfreq=$(<"$path/cpuinfo_min_freq") # Corrected from cpuinfo_max_freq
+        cpu_minfreq=$(<"$path/cpuinfo_max_freq")
         [ "$($getprop persist.sys.azenithconf.cpulimit)" -eq 1 ] && {
             new_maxtarget=$((cpu_maxfreq * 80 / 100))
             new_midtarget=$((cpu_maxfreq * 40 / 100))
