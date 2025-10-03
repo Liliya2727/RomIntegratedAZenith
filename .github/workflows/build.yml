@@ -19,9 +19,9 @@ on:
       - "listproperties.txt"
       - "init.azenith.rc"
       - "vendor_sepolicy.cil"
+      - "sepolicyguide.md"
       - "version"
 
-# Allow only one concurrent build workflows
 concurrency:
   group: build
   cancel-in-progress: true

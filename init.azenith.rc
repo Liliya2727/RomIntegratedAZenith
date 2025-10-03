@@ -1,22 +1,50 @@
-# Define Service
+# Define the main AZenith service daemon
 service AZenith /vendor/bin/hw/vendor.azenith-service
-    seclabel u:r:init:s0
+    # SELinux context for the service
+    seclabel u:r:azenith_service:s0
+	#seclabel u:r:init:s0
     class main
     user root
-    group root mediadrm media_rw sdcard_rw media system sdcard_r
+    group root system shell readproc sdcard_r sdcard_rw media_rw
+    capabilities SYS_NICE DAC_OVERRIDE KILL SYS_ADMIN NET_ADMIN SYS_PTRACE
     disabled
+    socket zygote stream 660 root system
 
+# Define the one-shot service to create config files on first boot
 service AZenith_prep /vendor/bin/AZenith_config
-    seclabel u:r:shell:s0
+    seclabel u:r:vendor_init:s0
     class late_start
     user root
-    group mediadrm media_rw sdcard_rw media system sdcard_r
+    group root system shell sdcard_r sdcard_rw media_rw
     oneshot
     disabled
 
-# Prep conf files and start service daemon
+#####################################################################
+# Startup Trigger Sequence
+#####################################################################
+
+# 1. After boot is complete, and if the master switch is on, run the prep script.
+#    The prep script should create necessary files and then set the property 'sys.azenith.config=ready'
 on property:sys.boot_completed=1 && property:persist.sys.azenith.state=1
     start AZenith_prep
 
+# 2. Once the prep script signals it is ready, and if the master switch is on, start the main AZenith service.
 on property:sys.azenith.config=ready && property:persist.sys.azenith.state=1
     start AZenith
+	
+#####################################################################
+# Runtime Restart Triggers
+#####################################################################
+
+# Restart AZenith to apply changes when its config properties are modified.
+# The trigger is gated by 'persist.sys.azenith.state=1' to ensure it only
+# runs when the feature is intentionally enabled and after the initial setup.
+
+on property:persist.sys.azenithconf.cpulimit=* && property:persist.sys.azenith.state=1 && property:sys.azenith.config=ready
+    restart AZenith
+    
+on property:persist.sys.azenithconf.gpreload=* && property:persist.sys.azenith.state=1 && property:sys.azenith.config=ready
+    restart AZenith
+
+on property:persist.sys.azenithconf.freqoffset=* && property:persist.sys.azenith.state=1 && property:sys.azenith.config=ready
+    restart AZenith
