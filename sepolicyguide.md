@@ -27,7 +27,9 @@ These definitions belong in:
 
 ```cil
 (typeattribute domain (azenith_service adbd_31 ...))
-(typeattribute property_type (azenith_prop system_prop ...))
+(typeattributeset mlstrustedsubject (azenith_service ...))
+(typeattributeset dev_type (azenith_service ...))
+(typeattribute extended_core_property_type (azenith_prop system_prop ...))
 ```
 
 ### Type Definitions
