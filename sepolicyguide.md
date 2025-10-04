@@ -15,7 +15,7 @@ We need to define new **types** and **attributes** for:
 These definitions belong in:
 
 ```
-/vendor/etc/selinux/[vendor_sepolicy.cil](vendor_sepolicy.cil)
+/vendor/etc/selinux/vendor_sepolicy.cil
 ```
 
 ### Attribute Declarations
@@ -94,5 +94,6 @@ Example denials might include:
 * Property service access restrictions
 
 Keep iterating until all legitimate functionality works without `avc: denied` spam.
+
 
 # Good luck.
