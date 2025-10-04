@@ -2,6 +2,8 @@
 Introducing Rom Integrated AZenith for developers/Rom Maintainer,
 Developed By @Zexshia and @rianixia on telegram
 
+Download from [Github Releases](https://github.com/Liliya2727/RomIntegratedAZenith/releases)
+
 # How to Add AZenith into my vendor?
 1. Place vendor.azenith-service binary to /vendor/bin/hw/
 2. Place init.azenith.rc to /vendor/etc/init/
