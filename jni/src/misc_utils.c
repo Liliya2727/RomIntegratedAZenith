@@ -5,7 +5,7 @@
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -22,7 +22,7 @@
  * Inputs             : str (char *) - string to trim newline from
  * Returns            : char * - string without newline
  * Description        : Trims a newline character at the end of a string if
- *                      present.
+ * present.
  ***********************************************************************************/
 [[gnu::always_inline]] char* trim_newline(char* string) {
     if (string == NULL)
@@ -56,9 +56,9 @@ void notify(const char* message) {
  * Function Name      : timern
  * Inputs             : None
  * Returns            : char * - pointer to a statically allocated string
- *                      with the formatted time.
+ * with the formatted time.
  * Description        : Generates a timestamp with the format
- *                      [YYYY-MM-DD HH:MM:SS.milliseconds].
+ * [YYYY-MM-DD HH:MM:SS.milliseconds].
  ***********************************************************************************/
 char* timern(void) {
     static char timestamp[64];
@@ -183,4 +183,23 @@ void stop_preloading(unsigned int* LOOP_INTERVAL) {
         did_log_preload = true;
         preload_active = false;
     }
+}
+
+/***********************************************************************************
+ * Function Name      : get_gamelist_path
+ * Inputs             : none
+ * Returns            : char* path to gamelist
+ * Description        : Checks prop persist.sys.azenith.gamelist for custom path otherwise returns default /sdcard/gamelist.txt
+ ***********************************************************************************/
+char* get_gamelist_path(void) {
+    static char path[MAX_PATH_LENGTH];
+    char prop_val[PROP_VALUE_MAX] = {0};
+
+    // Check if the property exists and is not empty
+    if (__system_property_get("persist.sys.azenith.gamelist", prop_val) > 0 && strlen(prop_val) > 0) {
+        snprintf(path, sizeof(path), "%s", prop_val);
+    } else {
+        snprintf(path, sizeof(path), "/sdcard/gamelist.txt");
+    }
+    return path;
 }

@@ -88,8 +88,9 @@ void run_profiler(const int profile) {
  * Note               : Caller is responsible for freeing the returned string.
  ***********************************************************************************/
 char* get_gamestart(void) {
+    char* list_path = get_gamelist_path();
     return execute_command("/system/bin/dumpsys window visible-apps | /vendor/bin/grep 'package=.* ' | /vendor/bin/grep -Eo -f %s",
-                           GAMELIST);
+                           list_path);
 }
 
 /***********************************************************************************

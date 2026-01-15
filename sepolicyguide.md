@@ -26,10 +26,10 @@ These definitions belong in:
 **Example:**
 
 ```cil
-(typeattribute domain (azenith_service adbd_31 ...))
-(typeattributeset mlstrustedsubject (azenith_service ...))
-(typeattributeset dev_type (azenith_service ...))
-(typeattribute extended_core_property_type (azenith_prop system_prop ...))
+(typeattributeset domain (azenith_service))
+(typeattributeset mlstrustedsubject (azenith_service))
+(typeattributeset dev_type (azenith_service))
+(typeattributeset extended_core_property_type (azenith_prop))
 ```
 
 ### Type Definitions
@@ -39,11 +39,10 @@ At the bottom of the file (with other type declarations), add:
 ```cil
 (type azenith_service)
 (roletype object_r azenith_service)
-
 (type azenith_service_exec)
 (roletype object_r azenith_service_exec)
-
 (type azenith_prop)
+(roletype object_r azenith_prop)
 ```
 
 ### Permissions and Transitions

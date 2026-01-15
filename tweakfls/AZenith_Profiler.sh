@@ -35,12 +35,13 @@ basename=/system/bin/basename
 # Add for debug prop
 AZLog() {
     if [ "$($getprop persist.sys.azenith-debug)" = "true" ]; then
-        local message log_tag
+        local message log_tagS
         message="$1"
         log_tag="AZenith"
         $log -t "$log_tag" "$message"
     fi
 }
+
 dlog() {
     local message log_tag
     message="$1"

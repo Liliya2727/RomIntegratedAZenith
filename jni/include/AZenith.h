@@ -29,7 +29,6 @@
 #define NOTIFY_TITLE "AZenith"
 #define LOG_TAG "AZenith"
 
-#define GAMELIST "/sdcard/gamelist.txt"
 #define MY_PATH                                                                      \
     "PATH=/vendor/bin/hw"
 
@@ -101,6 +100,7 @@ void log_zenith(LogLevel level, const char* message, ...);
 void set_priority(const pid_t pid);
 pid_t pidof(const char* name);
 int uidof(pid_t pid);
+char* get_gamelist_path(void);
 
 // Handler
 extern pid_t mlbb_pid;
