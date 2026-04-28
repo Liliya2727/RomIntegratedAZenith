@@ -34,7 +34,7 @@ int main(void) {
     // Initialize variables
     bool need_profile_checkup = false;
     MLBBState mlbb_is_running = MLBB_NOT_RUNNING;
-    ProfileMode cur_mode = PERFCOMMON;
+    ProfileMode cur_mode = BALANCED_PROFILE;
     static bool did_notify_start = false;
 
     log_zenith(LOG_INFO, "Daemon started as PID %d", getpid());
