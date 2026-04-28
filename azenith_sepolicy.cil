@@ -1,31 +1,58 @@
+;; -----------------------------------
+;; Define type and roletype
+;; -----------------------------------
 (type azenith_service)
 (roletype object_r azenith_service)
 (type azenith_service_exec)
 (roletype object_r azenith_service_exec)
 (type azenith_prop)
 (roletype object_r azenith_prop)
+
+;; -----------------------------------
+;; Define Typeattribute
+;; -----------------------------------
+(typeattributeset domain (azenith_service))
+(typeattributeset mlstrustedsubject (azenith_service))
+(typeattributeset dev_type (azenith_service))
+(typeattributeset extended_core_property_type (azenith_prop))
 (typepermissive azenith_service)
+
+;; Allow service to get/set its own props
 (allow azenith_service azenith_prop (file (getattr map open read)))
 (allow azenith_service azenith_prop (property_service (set)))
+
+;; Allow init/vendor_init to set props (startup)
 (allow init azenith_prop (property_service (set)))
 (allow vendor_init azenith_prop (property_service (set)))
 (allow vendor_init azenith_prop (file (read)))
+
+;; Allow shell/apps to read props (debugging/detection)
 (allow shell azenith_prop (file (getattr map open read)))
 (allow platform_app azenith_prop (file (read)))
 (allow system_app azenith_prop (file (read)))
 (allow priv_app azenith_prop (file (read)))
 (allow untrusted_app azenith_prop (file (getattr map open read)))
+
+;; Entry point
 (allow azenith_service azenith_service_exec (file (entrypoint execute getattr map read)))
 (allow init azenith_service_exec (file (execute getattr open read)))
+
+;; Capabilities (kill processes, root access, nice priority)
 (allow azenith_service azenith_service (capability (chown dac_override dac_read_search fowner kill setgid setuid sys_admin sys_nice sys_ptrace)))
+
+;; Necessary for systemv() calls to sh, grep, awk, toybox, etc.
 (allow azenith_service vendor_shell_exec (file (execute execute_no_trans getattr map open read)))
 (allow azenith_service vendor_toolbox_exec (file (execute execute_no_trans getattr map open read)))
 (allow azenith_service system_file (file (execute execute_no_trans getattr map open read)))
 (allow azenith_service vendor_file (file (execute_no_trans)))
+
+;; Allow communication with system_server and servicemanager
 (allow azenith_service servicemanager (binder (call transfer)))
 (allow azenith_service system_server (binder (call transfer)))
 (allow azenith_service system_server (fd (use)))
 (allow azenith_service system_server (fifo_file (write)))
+
+;; Allow finding specific services
 (allow azenith_service window_service (service_manager (find)))
 (allow azenith_service power_service (service_manager (find)))
 (allow azenith_service activity_service (service_manager (find)))
@@ -35,16 +62,22 @@
 (allow azenith_service battery_service (service_manager (find)))
 (allow azenith_service package_service (service_manager (find)))
 (allow azenith_service permission_service (service_manager (find)))
+
+;; Storage / SDCard Access
 (allow azenith_service fuse (dir (search)))
 (allow azenith_service fuse (file (getattr open read write append create)))
 (allow azenith_service mnt_user_file (dir (search)))
 (allow azenith_service mnt_user_file (lnk_file (read)))
+
+;; Proc & Sysfs (For tuning and process checks)
 (allow azenith_service proc (dir (search)))
 (allow azenith_service proc (file (getattr open read write)))
 (allow azenith_service proc_sched (file (getattr open read setattr write)))
 (allow azenith_service sysfs (dir (search)))
 (allow azenith_service sysfs (file (getattr open read setattr write)))
 (allow azenith_service sysfs_devices_system_cpu (file (setattr write)))
+
+;; Allow finding games/apps
 (allow azenith_service platform_app (dir (search)))
 (allow azenith_service platform_app (file (open read getattr)))
 (allow azenith_service priv_app (dir (search)))
@@ -53,9 +86,6 @@
 (allow azenith_service untrusted_app (file (open read getattr)))
 (allow azenith_service gmscore_app (dir (search)))
 (allow azenith_service gmscore_app (file (open read getattr)))
+
+;; Handling toolbox/init transitions
 (allow init azenith_service (process (noatsecure rlimitinh siginh transition)))
-(allow azenith_service hwservicemanager (dir (search)))
-(allow azenith_service hwservicemanager (file (getattr open read)))
-(allow azenith_service lmkd (file (getattr)))
-(allow azenith_service servicemanager (file (getattr)))
-(allow azenith_service vold (dir (search)))

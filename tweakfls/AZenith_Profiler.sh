@@ -161,6 +161,10 @@ setfreq() {
 # Sets the CPU governor for all cores individually for better error reporting.
 setgov() {
     local gov="$1"
+    if [ -z "$gov" ]; then
+        AZLog "Skipping governor restore because governor name is empty"
+        return 1
+    fi
     AZLog "Setting CPU governor to '$gov' for all cores..."
     
     for gov_path in /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor; do
@@ -175,10 +179,31 @@ setgov() {
     $chmod 444 /sys/devices/system/cpu/cpufreq/policy*/scaling_governor 2>/dev/null
 }
 
+get_default_governor() {
+    local default_cpu_gov
+    default_cpu_gov=$($getprop persist.sys.azenith.defaultgov)
+
+    if [ -z "$default_cpu_gov" ]; then
+        local CPU="/sys/devices/system/cpu/cpu0/cpufreq"
+        if [ -f "$CPU/scaling_governor" ]; then
+            default_cpu_gov=$(<"$CPU/scaling_governor")
+            setprop persist.sys.azenith.defaultgov "$default_cpu_gov"
+            AZLog "Initialized default governor prop to: $default_cpu_gov"
+        else
+            default_cpu_gov="sugov_ext"
+            setprop persist.sys.azenith.defaultgov "$default_cpu_gov"
+            AZLog "Governor prop empty and cpu0 governor unavailable, fallback to: $default_cpu_gov"
+        fi
+    fi
+
+    echo "$default_cpu_gov"
+}
+
 
 setsfreqs() {
     local prop_val limiter curprofile
     prop_val=$($getprop persist.sys.azenithconf.freqoffset)
+    [ -z "$prop_val" ] && prop_val="100"
     tmp=${prop_val//Disabled/100}
     limiter=${tmp//%/''}
 
@@ -268,7 +293,7 @@ sync
 balanced_profile() {
 
     # Load default cpu governor
-    default_cpu_gov=$($getprop persist.sys.azenith.defaultgov)
+    default_cpu_gov=$(get_default_governor)
 
     # Power level settings
     for pl in /sys/devices/system/cpu/perf; do

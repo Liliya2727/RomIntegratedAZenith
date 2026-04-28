@@ -1,0 +1,6 @@
+# Local helper scripts
+compile_local.sh
+
+# Build outputs
+output/
+obj/

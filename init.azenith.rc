@@ -11,8 +11,10 @@ service AZenith /vendor/bin/hw/vendor.azenith-service
     socket zygote stream 660 root system
 
 # Define the one-shot service to create config files on first boot
-service AZenith_prep /vendor/bin/AZenith_config
-    seclabel u:r:vendor_init:s0
+service Xzenith /vendor/bin/AZenith_config
+    seclabel u:r:azenith_service:s0
+    # if you have issue with azenith domain use vendor_init instead
+    #seclabel u:r:vendor_init:s0
     class late_start
     user root
     group root system shell sdcard_r sdcard_rw media_rw
@@ -26,7 +28,7 @@ service AZenith_prep /vendor/bin/AZenith_config
 # 1. After boot is complete, and if the master switch is on, run the prep script.
 #    The prep script should create necessary files and then set the property 'sys.azenith.config=ready'
 on property:sys.boot_completed=1 && property:persist.sys.azenith.state=1
-    start AZenith_prep
+    start Xzenith
 
 # 2. Once the prep script signals it is ready, and if the master switch is on, start the main AZenith service.
 on property:sys.azenith.config=ready && property:persist.sys.azenith.state=1
