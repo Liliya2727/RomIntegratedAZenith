@@ -4,18 +4,18 @@ Developed By @Zexshia and @rianixia on telegram
 
 Download from [Github Releases](https://github.com/Liliya2727/RomIntegratedAZenith/releases)
 
-# How to Add AZenith into my vendor?
+## How to Add AZenith into my vendor?
 1. Place vendor.azenith-service binary to /vendor/bin/hw/
 2. Place init.azenith.rc to /vendor/etc/init/
 3. Place AZenith_Profiler and AZenith_config to /vendor/bin/
 4. Patch vendor [sepolicy](sepolicyguide.md)
 5. In /vendor/build.prop add "persist.sys.azenith.state" prop value 1 for enabled, and value 0 for disabled
-6. To enable other tweaks refer to the [properties list](listproperties.txt)
+6. To enable other tweaks and customization refer to the [properties list](listproperties.md)
 7. Repack Vendor
 
-# How add your app packages?
-1. Create the file gamelist.txt on /sdcard/gamelist.txt
-2. Add your package inside the file for example "com.mobile.legends" if you want more package just add them in new lines
+## How add your app packages?
+1. Create the file gamelist.txt on /sdcard/gamelist.txt (If AZenith is properly running it should generate an example gamelist.txt)
+2. Add your package inside the file for example "coample gamem.mobile.legends" if you want more package just add them in new lines
 For Example
 ```
 com.mobile.legends

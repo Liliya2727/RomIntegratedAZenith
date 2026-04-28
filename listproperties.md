@@ -1,3 +1,4 @@
+```json
 // Toggle Lite Mode(change the prop func)
 // Val 1 = ON , 0 = OFF
 persist.sys.azenithconf.cpulimit 
@@ -26,3 +27,4 @@ persist.sys.azenith.defaultgov
 sys.azenith.gameinfo // Show Current game info // VAL <pkgname> <pid> <uid>
 sys.azenith.currentprofile // Current Profile // VAL 0/1/2/3
 // 1 = Performance // 2 = Balanced // 3 = Powersaves //
+```
