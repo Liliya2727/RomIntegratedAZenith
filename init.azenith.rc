@@ -12,7 +12,9 @@ service AZenith /vendor/bin/hw/vendor.azenith-service
 
 # Define the one-shot service to create config files on first boot
 service AZenith_prep /vendor/bin/AZenith_config
-    seclabel u:r:vendor_init:s0
+    seclabel u:r:azenith_service:s0
+    # if you have issue with azenith domain use vendor_init instead
+    #seclabel u:r:vendor_init:s0
     class late_start
     user root
     group root system shell sdcard_r sdcard_rw media_rw
