@@ -1,36 +1,37 @@
-// build.rs — konfigurasi build AZenith.
+// build.rs — AZenith build configuration.
 //
-// Membaca `../Config.toml` (root repo) lalu men-generate `$OUT_DIR/paths.rs`
-// berisi satu `pub(crate) const &str` untuk tiap nilai yang dikonfigurasi:
-// semua path runtime dari tabel `[PATHS]`, plus pilihan device dari `[DEVICE]`.
+// Reads `../Config.toml` (repo root) and generates `$OUT_DIR/paths.rs` holding
+// one `pub(crate) const &str` for every configured value: all runtime paths from
+// the `[PATHS]` table, plus the device choice from `[DEVICE]`.
 //
-// Nama key di Config.toml sengaja dibuat sama persis dengan nama konstanta
-// Rust yang di-generate (`BASE_DIR` -> `pub(crate) const BASE_DIR`), jadi tidak
-// ada lagi pemetaan dua arah yang bisa meleset.
+// Every key in Config.toml is named exactly like the Rust constant it generates
+// (`BASE_DIR` -> `pub(crate) const BASE_DIR`), so there is no two-way mapping
+// that can drift.
 //
-// Semua diselesaikan di sini (build-time), bukan di runtime, supaya:
-//   * binary tidak perlu membawa parser TOML (dependency tetap minim), dan
-//   * source .rs bebas hardcode konfigurasi — cukup edit Config.toml lalu build ulang.
+// Everything is resolved here, at build time rather than at runtime, so that:
+//   * the binary does not have to carry a TOML parser (dependencies stay minimal), and
+//   * the .rs sources stay free of hardcoded config — edit Config.toml and rebuild.
 //
-// Aturan resolusi path ada di Config.toml: nilai diawali "/" = absolut, selain itu
-// relatif terhadap induknya, dan "" = memakai path induk.
+// The path resolution rules live in Config.toml: a value starting with "/" is
+// absolute, anything else is relative to its parent, and "" means "use the
+// parent path".
 
 use std::collections::BTreeMap;
 use std::env;
 use std::fs;
 use std::path::PathBuf;
 
-/// Key berupa direktori: (nama konstanta = nama key, default, induk).
-/// Induk `None` berarti key ini adalah root (`BASE_DIR`) dan nilainya harus absolut.
+/// Directory keys: (constant name = key name, default, parent).
+/// A `None` parent means this key is the root (`BASE_DIR`) and its value must be absolute.
 const DIR_KEYS: &[(&str, &str, Option<&str>)] = &[
     ("BASE_DIR", "/data/adb/.config/AntaresRS", None),
     ("GAMELIST_DIR", "gamelist", Some("BASE_DIR")),
     ("API_DIR", "API", Some("BASE_DIR")),
 ];
 
-/// Key berupa file: (nama konstanta = nama key, default, induk).
-/// Default-nya relatif terhadap induknya, jadi mengubah `GAMELIST_DIR` juga
-/// memindahkan `GAMELIST_FILE` secara otomatis.
+/// File keys: (constant name = key name, default, parent).
+/// Defaults are relative to their parent, so changing `GAMELIST_DIR` also moves
+/// `GAMELIST_FILE` along with it.
 const FILE_KEYS: &[(&str, &str, &str)] = &[
     ("DAEMON_LOCK", "daemon.lock", "BASE_DIR"),
     ("CODES_CACHE", "codes", "BASE_DIR"),
@@ -43,13 +44,13 @@ const FILE_KEYS: &[(&str, &str, &str)] = &[
     ("GAMEINFO", "gameinfo", "API_DIR"),
 ];
 
-/// `[DEVICE] SOC` — keluarga SoC yang tweak-nya dipakai. `none` = tanpa tweak khusus,
-/// sama seperti perilaku lama saat prop `soctype` kosong.
+/// `[DEVICE] SOC` — the SoC family whose tweaks get applied. `none` = no chipset
+/// specific tweaks, same as the old behaviour when the `soctype` prop was empty.
 const SOC_DEFAULT: &str = "none";
 
-/// Nilai yang diterima untuk `[DEVICE] SOC` -> nama kanonik yang di-generate.
-/// Angka lama (dari prop `persist.azenith.soctype`) masih diterima untuk migrasi,
-/// tapi build.rs bakal kasih peringatan.
+/// Values accepted for `[DEVICE] SOC` -> canonical name that gets generated.
+/// The old numeric values (from the `persist.azenith.soctype` prop) are still
+/// accepted so migrations keep working, but build.rs prints a warning for them.
 const SOC_ALIASES: &[(&str, &str)] = &[
     ("none", "none"),
     ("mediatek", "mediatek"),
@@ -68,19 +69,19 @@ const SOC_ALIASES: &[(&str, &str)] = &[
 fn main() {
     let manifest = PathBuf::from(env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"));
 
-    // src/daemon/codes.rs nge-embed file ini lewat include_bytes!(). File-nya tidak
-    // ikut di repo (CI menyalinnya dari hasil build Resolver/ sebelum cargo jalan),
-    // jadi dicek di sini dulu — daripada error-nya cuma nunjuk baris .rs yang bikin
-    // bingung.
+    // src/daemon/codes.rs embeds this file with include_bytes!(). It is not part
+    // of the repo (CI copies it over from the Resolver build before cargo runs),
+    // so check for it here first — otherwise all you get is an error pointing at
+    // a .rs line with no explanation.
     let apk = manifest.join("binder_resolver.apk");
     println!("cargo:rerun-if-changed={}", apk.display());
     if !apk.is_file() {
         panic!(
-            "Cargo/binder_resolver.apk tidak ada.\n\
-             Build Binder Resolver dulu, lalu salin APK-nya:\n  \
+            "Cargo/binder_resolver.apk is missing.\n\
+             Build the Binder Resolver first, then copy the APK over:\n  \
              cd Resolver && ./gradlew assembleRelease\n  \
              cp app/build/outputs/apk/release/app-release-unsigned.apk ../Cargo/binder_resolver.apk\n\
-             (CI melakukannya otomatis di step \"Stage Binder Resolver APK\")"
+             (CI does this automatically in the \"Stage Binder Resolver APK\" step)"
         );
     }
 
@@ -90,32 +91,32 @@ fn main() {
     let raw = match fs::read_to_string(&config) {
         Ok(text) => text,
         Err(e) => {
-            println!("cargo:warning=Config.toml tidak bisa dibaca ({e}), memakai semua path default");
+            println!("cargo:warning=cannot read Config.toml ({e}), falling back to every default path");
             String::new()
         }
     };
     let values = parse_section(&raw, "PATHS");
 
-    // Pass 1: direktori (BASE_DIR lebih dulu karena semua key lain turun darinya).
+    // Pass 1: directories (BASE_DIR first, since every other key derives from it).
     let mut resolved: BTreeMap<&'static str, String> = BTreeMap::new();
     for (konst, default, parent) in DIR_KEYS {
         let parent_path = parent.map(|p| resolved[p].as_str()).unwrap_or("");
         let value = values.get(*konst).map(String::as_str).unwrap_or(*default);
         resolved.insert(*konst, solve(*konst, parent_path, value, *default, *parent));
     }
-    // BASE_DIR adalah root; semua path lain harus berada di bawahnya secara absolut.
+    // BASE_DIR is the root; every other path has to live under it and be absolute.
     if !resolved["BASE_DIR"].starts_with('/') {
         println!(
-            "cargo:warning=BASE_DIR bukan path absolut ({}), memakai default",
+            "cargo:warning=BASE_DIR is not an absolute path ({}), using the default",
             resolved["BASE_DIR"]
         );
         resolved.insert("BASE_DIR", DIR_KEYS[0].1.to_string());
     }
 
-    // Pass 2: file, relatif terhadap direktori induknya yang sudah final.
+    // Pass 2: files, relative to their parent directory which is already final.
     let mut out = String::from(
-        "// @generated oleh build.rs dari Config.toml — JANGAN EDIT.\n\
-         // Ubah Config.toml di root repo lalu build ulang.\n\n",
+        "// @generated by build.rs from Config.toml — DO NOT EDIT.\n\
+         // Edit Config.toml in the repo root, then rebuild.\n\n",
     );
     for (konst, path) in &resolved {
         out.push_str(&format!("pub(crate) const {konst}: &str = \"{}\";\n", escape(path)));
@@ -127,23 +128,23 @@ fn main() {
         out.push_str(&format!("pub(crate) const {konst}: &str = \"{}\";\n", escape(&path)));
     }
 
-    // Pass 3: konfigurasi device dari tabel [DEVICE].
+    // Pass 3: device configuration from the [DEVICE] table.
     out.push_str(&format!(
         "pub(crate) const SOC: &str = \"{}\";\n",
         escape(&resolve_soc(&parse_section(&raw, "DEVICE")))
     ));
 
     let dest = PathBuf::from(env::var("OUT_DIR").expect("OUT_DIR")).join("paths.rs");
-    fs::write(&dest, out).unwrap_or_else(|e| panic!("gagal menulis {}: {e}", dest.display()));
+    fs::write(&dest, out).unwrap_or_else(|e| panic!("failed to write {}: {e}", dest.display()));
 }
 
-/// Gabungkan `value` dengan `parent` lalu validasi hasilnya absolut.
+/// Join `value` with `parent`, then validate that the result is absolute.
 fn solve(key: &str, parent: &str, value: &str, default: &str, has_parent: Option<&str>) -> String {
     let joined = join(parent, value);
     if joined.starts_with('/') {
         return joined;
     }
-    // Hasilnya tidak absolut — biasanya BASE_DIR yang salah/kosong. Kembali ke default.
+    // Not absolute — usually a bad or empty BASE_DIR. Fall back to the default.
     let resolved_default = match has_parent {
         Some(_) => join(parent, default),
         None => default.to_string(),
@@ -155,7 +156,7 @@ fn solve(key: &str, parent: &str, value: &str, default: &str, has_parent: Option
 }
 
 /// `join("", "x")` = "x"; `join("/a", "/b")` = "/b"; `join("/a", "b")` = "/a/b";
-/// `join("/a", "")` = "/a". Slash ganda dan slash di akhir dibersihkan.
+/// `join("/a", "")` = "/a". Duplicate and trailing slashes are cleaned up.
 fn join(parent: &str, value: &str) -> String {
     let value = value.trim();
     if value.is_empty() {
@@ -173,7 +174,7 @@ fn join(parent: &str, value: &str) -> String {
     }
 }
 
-/// Ambil hanya key dari satu tabel di Config.toml: `key = "value"` atau `key = value`.
+/// Pull the keys out of a single table in Config.toml: `key = "value"` or `key = value`.
 fn parse_section(text: &str, wanted: &str) -> BTreeMap<String, String> {
     let mut out = BTreeMap::new();
     let mut in_section = false;
@@ -202,8 +203,9 @@ fn parse_section(text: &str, wanted: &str) -> BTreeMap<String, String> {
     out
 }
 
-/// Normalisasi `[DEVICE] SOC` ke nama kanonik yang di-generate. Angka lama
-/// (0-5, bekas prop `soctype`) masih diterima supaya migrasi tidak diam-diam putus.
+/// Normalize `[DEVICE] SOC` to the canonical name that gets generated. The old
+/// numeric values (0-5, from the former `soctype` prop) are still accepted so a
+/// migration does not silently break.
 fn resolve_soc(device: &BTreeMap<String, String>) -> String {
     let Some(value) = device.get("SOC").map(|v| v.trim().to_ascii_lowercase()) else {
         return SOC_DEFAULT.to_string();
@@ -213,20 +215,20 @@ fn resolve_soc(device: &BTreeMap<String, String>) -> String {
     }
     let Some((alias, canonical)) = SOC_ALIASES.iter().find(|(alias, _)| *alias == value) else {
         println!(
-            "cargo:warning=[DEVICE] SOC = \"{value}\" tidak dikenal, memakai \"{SOC_DEFAULT}\" \
-             (nilai valid: none, mediatek, snapdragon, exynos, unisoc, tensor)"
+            "cargo:warning=[DEVICE] SOC = \"{value}\" is unknown, using \"{SOC_DEFAULT}\" \
+             (valid values: none, mediatek, snapdragon, exynos, unisoc, tensor)"
         );
         return SOC_DEFAULT.to_string();
     };
     if alias.chars().all(|c| c.is_ascii_digit()) {
         println!(
-            "cargo:warning=[DEVICE] SOC = \"{alias}\" sudah legacy (bekas prop soctype), pakai \"{canonical}\""
+            "cargo:warning=[DEVICE] SOC = \"{alias}\" is legacy (from the old soctype prop), use \"{canonical}\""
         );
     }
     canonical.to_string()
 }
 
-/// Buang komentar `#` yang berada di luar string.
+/// Drop `#` comments that sit outside a string.
 fn strip_comment(line: &str) -> &str {
     let mut in_string = false;
     let mut escaped = false;
@@ -241,7 +243,7 @@ fn strip_comment(line: &str) -> &str {
     line
 }
 
-/// Lepas pasangan tanda kutip dan proses escape dasar.
+/// Strip the surrounding quotes and process basic escapes.
 fn unquote(value: &str) -> String {
     let value = value.trim();
     let inner = value
@@ -274,7 +276,7 @@ fn unquote(value: &str) -> String {
     out
 }
 
-/// Escape supaya aman dipakai di dalam string literal Rust.
+/// Escape so the value is safe to use inside a Rust string literal.
 fn escape(path: &str) -> String {
     path.replace('\\', "\\\\").replace('"', "\\\"")
 }
