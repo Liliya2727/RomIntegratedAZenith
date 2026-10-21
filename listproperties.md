@@ -139,7 +139,7 @@ There is no property for this; it is a file and a marker, both inside `GAMELIST_
 | `gamelist/gamelist.txt` | the daemon (first boot), or you | One package name per line. |
 
 On boot `initialize` checks for the marker. If it is missing, the daemon asks the
-package manager (`IPackageManager.getInstalledPackages`) for every installed
+package manager (`IPackageManager.getAllPackages`) for every installed
 package, writes the result to `gamelist.txt`, and only then writes the marker —
 so a scan that failed (package manager not up yet, transaction refused) is retried
 on the next boot instead of being lost. If the marker already exists, the daemon

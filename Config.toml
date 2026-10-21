@@ -1,0 +1,94 @@
+# =====================================================================
+#  AZenith BuildConfigs
+# =====================================================================
+#
+#  Every runtime path AZenith uses lives in this file instead of being
+#  hardcoded in the source. If you fork this repo, just edit this file for
+#  your device layout and rebuild — no need to hunt through .rs files.
+#
+#  Consumed by Cargo/build.rs and baked into Rust constants in $OUT_DIR/paths.rs
+#  at compile time (build-time, so the binary stays lean and needs no TOML
+#  parser at runtime).
+#
+#  Every key below is named exactly like the Rust constant it generates, e.g.
+#
+#      BASE_DIR = "/data/vendor/AZenithInt"
+#        -> pub(crate) const BASE_DIR: &str = "/data/vendor/AZenithInt";
+#
+# ---------------------------------------------------------------------
+#  HOW TO READ THESE VALUES
+# ---------------------------------------------------------------------
+#  * A value starting with "/"  -> absolute path, used as-is.
+#  * A value without "/"        -> relative to its parent (see each key).
+#  * An empty value ("")        -> uses the parent path automatically.
+#
+#  Every key must end up as an absolute path; if something looks wrong,
+#  build.rs prints a `cargo:warning` and falls back to the default.
+#
+#  Keys you do not touch keep the defaults written here, so it is safe to
+#  delete any of them.
+
+[PATHS]
+# ---------------------------------------------------------------------
+#  Root of all AZenith runtime data.
+#  Everything below is relative to this unless you give an absolute path.
+#  This is the one you will usually want to change.
+# ---------------------------------------------------------------------
+BASE_DIR = "/data/vendor/AZenithInt"
+
+# ---------------------------------------------------------------------
+#  Directories (relative to BASE_DIR unless absolute)
+# ---------------------------------------------------------------------
+# Folder holding the game package list that is watched for changes.
+#
+GAMELIST_DIR = "gamelist"
+
+# API folder for other instances
+API_DIR = "API"
+
+# ---------------------------------------------------------------------
+#  Daemon control files (relative to BASE_DIR)
+# ---------------------------------------------------------------------
+# Lock file so only one daemon instance runs at a time.
+DAEMON_LOCK = ".lock"
+
+# Binder transaction code cache, one file per SDK/build.
+#   CODES_CACHE.{sdk}.{incremental} -> codes.34.1, codes.35.2, ...
+CODES_CACHE = "codes"
+
+# ---------------------------------------------------------------------
+#  State files (relative to BASE_DIR)
+# ---------------------------------------------------------------------
+# Currently applied profile, written by the profiler worker.
+CUR_PROF = "current_profile"
+# Package currently in the foreground.
+ACTIVE_APP = "active_app"
+# Profile state store (profile 1/2/3, screen/saver/zen, ...).
+STATE_FILE = "device_info.toml"
+
+# Binder resolver APK, extracted from the binary and run through
+# app_process to resolve transaction codes.
+BINDER_RESOLVER_APK = "binder_resolver.apk"
+
+# ---------------------------------------------------------------------
+#  Files inside GAMELIST_DIR / API_DIR (relative to their parent)
+# ---------------------------------------------------------------------
+# One package name per line. Changing GAMELIST_DIR above moves this file too.
+GAMELIST_FILE = "gamelist.txt"
+# Written by run_profiler(), read by the other subcommands.
+CURRENT_PROFILE = "current_profile"
+GAMEINFO = "gameinfo"
+
+[DEVICE]
+# SoC family whose tweak set is applied whenever a profile runs.
+#
+#   none       -> no chipset-specific tweaks (default; safe if unsure)
+#   mediatek   -> PPM, gpufreq/gpufreqv2, cpufreq, FPSGO
+#   snapdragon -> KGSL/Adreno devfreq, bus_dcvs
+#   exynos     -> /sys/kernel/gpu, Mali devfreq, MIF devfreq
+#   unisoc     -> GPU devfreq
+#   tensor     -> Mali devfreq, MIF devfreq
+#
+# Set this to your device's SoC before building, otherwise only the generic
+# (non-chipset) tweaks are applied.
+SOC = "mediatek"

@@ -1,0 +1,16 @@
+[package]
+name = "sys_azenithrs-service"
+version = "1.0.0"
+edition = "2024"
+
+[dependencies]
+fs2 = "0.4"
+libc = "0.2"
+glob = "0.3"
+
+[profile.release]
+opt-level = 'z'
+lto = true
+codegen-units = 1
+panic = 'abort'
+strip = true

@@ -4,3 +4,17 @@ compile_local.sh
 # Build outputs
 output/
 obj/
+target/
+modules/
+extracted/
+*.zip
+
+# gradle / android build outputs (Binder Resolver)
+Resolver/.gradle/
+Resolver/build/
+Resolver/app/build/
+Resolver/local.properties
+
+# NOTE: Cargo/binder_resolver.apk stays TRACKED on purpose —
+# src/daemon/codes.rs embeds it with include_bytes!(), so a fresh checkout
+# without it cannot compile. CI rebuilds and overwrites it before cargo runs.

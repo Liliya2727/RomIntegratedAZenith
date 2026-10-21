@@ -78,9 +78,14 @@ Define the property contexts in:
 ```
 
 ```text
-sys.azenith.            u:object_r:azenith_prop:s0
-persist.sys.azenith.    u:object_r:azenith_prop:s0
+sys.azenith.           u:object_r:azenith_prop:s0
+persist.azenith.       u:object_r:azenith_prop:s0
+persist.azenithconf.   u:object_r:azenith_prop:s0
 ```
+
+Property names are prefix-matched, so `persist.azenith.` does **not** cover
+`persist.azenithconf.*` (there is no dot after `azenith` there) — you need the
+third line, otherwise the `azenithconf` toggles get denied.
 
 ---
 

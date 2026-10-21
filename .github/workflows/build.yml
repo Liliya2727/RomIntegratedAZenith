@@ -10,16 +10,17 @@ on:
       - main
     paths:
       - ".github/workflows/build.yml"
-      - '.github/scripts/**'
-      - "jni/**"
-      - "tweakfls/**"
-      - "modules/**"
-      - "preloadbin/**"
+      - ".github/scripts/**"
+      - "Cargo/**"
+      - "Config.toml"
+      - "Resolver/**"
       - "gamelist.txt"
-      - "listproperties.txt"
+      - "changelog.md"
+      - "listproperties.md"
+      - "sepolicyguide.md"
       - "init.azenith.rc"
       - "vendor_sepolicy.cil"
-      - "sepolicyguide.md"
+      - "azenith_sepolicy.cil"
       - "version"
 
 concurrency:
@@ -36,21 +37,80 @@ jobs:
         with:
           fetch-depth: 0
 
+      # ------------------------------------------------------------------
+      #  Binder Resolver APK (Java) -> staged as Cargo/binder_resolver.apk,
+      #  where src/daemon/codes.rs picks it up via include_bytes!(). It MUST
+      #  be built before the Rust step.
+      # ------------------------------------------------------------------
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          java-version: "21"
+          distribution: temurin
+
+      - name: Build Binder Resolver APK (release, unsigned)
+        working-directory: ./Resolver
+        run: |
+          chmod +x ./gradlew
+          ./gradlew --no-daemon clean assembleRelease
+
+      - name: Stage Binder Resolver APK for include_bytes!
+        run: |
+          APK=$(find Resolver/app/build/outputs/apk/release -name "*.apk" | head -n 1)
+          if [ -z "$APK" ]; then
+            echo "Binder Resolver APK not found under Resolver/app/build/outputs/apk/release" >&2
+            exit 1
+          fi
+          install -Dm644 "$APK" Cargo/binder_resolver.apk
+          ls -l Cargo/binder_resolver.apk
+
+      # ------------------------------------------------------------------
+      #  ArchDaemon (Rust) -> arm64-v8a static binary
+      # ------------------------------------------------------------------
       - name: NDK Setup
+        id: setup-ndk
         uses: nttld/setup-ndk@v1.5.0
         with:
-          ndk-version: r28b
+          ndk-version: r30
 
-      - name: Build AZenith JNI
-        run: ndk-build
+      - name: Setup Rust Toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android
 
+      - name: Install cargo-ndk
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-ndk
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            Cargo/target
+          # Config.toml is baked into the binary at build time (build.rs),
+          # so a config change must not reuse a stale target dir.
+          key: ${{ runner.os }}-cargo-${{ hashFiles('Cargo/Cargo.lock', 'Config.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - name: Build ArchDaemon
+        working-directory: ./Cargo
+        env:
+          ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
+        run: cargo ndk -t arm64-v8a build --release
+
+      # ------------------------------------------------------------------
+      #  Package + upload
+      # ------------------------------------------------------------------
       - name: Compile Binary Package Zip
         id: compileZip
         run: bash .github/scripts/compile_zip.sh
 
       - name: Unzip AZenith Package
-        run: |
-          unzip ${{ steps.compileZip.outputs.zipName }} -d extracted
+        run: unzip -q "${{ steps.compileZip.outputs.zipName }}" -d extracted
 
       - name: Upload Build Artifact
         uses: actions/upload-artifact@v4.6.2
@@ -58,19 +118,20 @@ jobs:
           name: ${{ steps.compileZip.outputs.zipName }}
           path: extracted/**
 
+      # secrets.* is not readable inside an `if:`, so the guard lives in bash
+      # and simply skips the upload when the secrets are not configured.
       - name: Upload To Telegram
         env:
           CHAT_ID: ${{ secrets.CHAT_ID }}
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
-          COMMIT_MESSAGE: ${{ github.event.head_commit.message }}
-          COMMIT_URL: ${{ github.event.head_commit.url }}
+          COMMIT_MESSAGE: ${{ github.event.head_commit.message || github.event.pull_request.title || 'manual run' }}
+          COMMIT_URL: ${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           TITLE: AZenith Rom INT
         run: |
-          if [ ! -z "${{ secrets.CHAT_ID }}" ] && [ ! -z "${{ secrets.BOT_TOKEN }}" ]; then
-            export VERSION=$(git rev-list --count HEAD)
-            bash .github/scripts/telegram_bot.sh ${{ steps.compileZip.outputs.zipName }}
-          else
-            echo "Telegram bot token or chatid is undefined, please add it to repository secrets!"
-            exit 1
+          if [ -z "$CHAT_ID" ] || [ -z "$BOT_TOKEN" ]; then
+            echo "CHAT_ID/BOT_TOKEN secrets are not set, skipping Telegram upload."
+            exit 0
           fi
+          export VERSION="$(git rev-list --count HEAD)"
+          bash .github/scripts/telegram_bot.sh "${{ steps.compileZip.outputs.zipName }}"
