@@ -18,7 +18,7 @@ pub(crate) fn log_info(component: &str, message: &str) {
     log_write(Lv::Info, component, message);
 }
 
-/// DEBUG detail. Dropped unless `persist.azenith.debugmode` is on.
+/// DEBUG detail. Dropped unless `persist.sys.azenithIntg.debugmode` is on.
 pub(crate) fn log_debug(component: &str, message: &str) {
     log_write(Lv::Debug, component, message);
 }

@@ -11,6 +11,6 @@ service AZenith /vendor/bin/hw/vendor.azenith-service
     socket zygote stream 660 root system
 
 
-on property:sys.boot_completed=1 && property:persist.azenith.state=1
+on property:sys.boot_completed=1 && property:persist.sys.azenithIntg.state=1
     start AZenith
 	

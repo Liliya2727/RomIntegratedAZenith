@@ -54,7 +54,7 @@ fn apply(gov: &str, why: &str) {
 /// last `performance`/`eco` is put back. On the very first apply after boot
 /// nothing is saved yet, so the kernel baseline is adopted and left alone.
 pub(crate) fn apply_balanced_governor() {
-    let custom = getprop("persist.azenith.custom_default_cpu_gov");
+    let custom = getprop("persist.sys.azenithIntg.custom_default_cpu_gov");
     if !custom.is_empty() {
         apply(&custom, "using custom governor");
         return;
@@ -70,12 +70,12 @@ pub(crate) fn apply_balanced_governor() {
 
 /// `performance` — save the baseline first, then switch.
 pub(crate) fn apply_performance_governor() {
-    apply_profile_governor("persist.azenith.custom_performance_cpu_gov", "performance");
+    apply_profile_governor("persist.sys.azenithIntg.custom_performance_cpu_gov", "performance");
 }
 
 /// `eco` — same contract as [`apply_performance_governor`].
 pub(crate) fn apply_powersave_governor() {
-    apply_profile_governor("persist.azenith.custom_powersave_cpu_gov", "powersave");
+    apply_profile_governor("persist.sys.azenithIntg.custom_powersave_cpu_gov", "powersave");
 }
 
 /// A `performance`/`eco` apply: an explicit `custom_*` property wins untouched.
@@ -152,7 +152,7 @@ pub(crate) fn setrender(renderer: &str) {
 }
 
 pub(crate) fn init_renderer() {
-    let renderer = getprop("persist.azenithconf.renderer");
+    let renderer = getprop("persist.sys.azenithConfIntg.renderer");
     
     if renderer.is_empty() || renderer.eq_ignore_ascii_case("default") {
         log_info(comp::SETTINGS_RENDERER, &format!("default renderer, skipping setup"));

@@ -1,13 +1,15 @@
 # AZenith Properties List
 
-> `persist.sys.azenith*`. They are now `persist.azenith*` — the `sys.` segment is gone.
-> If you are updating from an older build, migrate your `/vendor/build.prop` values and your
-> `vendor_property_context` entries, or nothing will be read.
+> **Renamed:** the old `persist.azenith.*` / `persist.azenithconf.*` properties are now
+> `persist.sys.azenithIntg.*` and `persist.sys.azenithConfIntg.*`. If you are updating from an
+> older build, migrate your `/vendor/build.prop` values and your property contexts, or nothing
+> will be read.
 >
-> Don't forget the [sepolicy property contexts](sepolicyguide.md): `persist.azenith.` and
-> `persist.azenithconf.` are separate prefixes and both have to be declared.
+> Don't forget the [sepolicy](sepolicyguide.md): both prefixes have to be covered, and since
+> `persist.sys.` is owned by the platform (`system_prop`), the old vendor property-context
+> trick no longer applies.
 >
-> These properties is optional to add, you can add some of it and fill it with your desired values or just leave it default "except for persist.azenith.state"
+> These properties is optional to add, you can add some of it and fill it with your desired values or just leave it default "except for persist.sys.azenithIntg.state"
 
 ---
 
@@ -15,9 +17,9 @@
 
 | Property | Values | Description |
 | --- | --- | --- |
-| `persist.azenith.state` | `1` = enabled, `0` = disabled | Master switch. Set it in `/vendor/build.prop` so `init.azenith.rc` starts the daemon on boot. The daemon also writes `stopped` to it while restarting the service. |
-| `persist.azenith.disabletweak` | `1` = disable, `0` = enable | Disables every tweak without turning the daemon off. |
-| `persist.azenith.debugmode` | `true` / `false` | Verbose (DEBUG) logging to logcat, tag `AZenith`. Restart the service after changing it. |
+| `persist.sys.azenithIntg.state` | `1` = enabled, `0` = disabled | Master switch. Set it in `/vendor/build.prop` so `init.azenith.rc` starts the daemon on boot. The daemon also writes `stopped` to it while restarting the service. |
+| `persist.sys.azenithIntg.disabletweak` | `1` = disable, `0` = enable | Disables every tweak without turning the daemon off. |
+| `persist.sys.azenithIntg.debugmode` | `true` / `false` | Verbose (DEBUG) logging to logcat, tag `AZenith`. Restart the service after changing it. |
 
 
 ---
@@ -26,9 +28,9 @@
 
 | Property | Applies to |
 | --- | --- |
-| `persist.azenith.custom_default_cpu_gov` | balanced — explicit override, wins over the saved governor |
-| `persist.azenith.custom_powersave_cpu_gov` | eco — explicit override for the powersave governor |
-| `persist.azenith.custom_performance_cpu_gov` | performance — explicit override for the performance governor |
+| `persist.sys.azenithIntg.custom_default_cpu_gov` | balanced — explicit override, wins over the saved governor |
+| `persist.sys.azenithIntg.custom_powersave_cpu_gov` | eco — explicit override for the powersave governor |
+| `persist.sys.azenithIntg.custom_performance_cpu_gov` | performance — explicit override for the performance governor |
 
 Resolution per profile:
 
@@ -66,24 +68,24 @@ longer accepted commands.
 
 | Property | Description |
 | --- | --- |
-| `persist.azenithconf.litemode` | Lite mode (CPU limiting path). |
-| `persist.azenithconf.clearbg` | Clear background apps in the performance profile. |
-| `persist.azenithconf.freqoffset` | Frequency ceiling in percent, `10`–`100`. `100` or `Disabled` = no limit. |
-| `persist.azenithconf.fstrim` | Whether the module requests the periodic `fstrim` run. |
-| `persist.azenithconf.logd` | Stop the logger services (`logd` and friends) while gaming. |
-| `persist.azenithconf.walttunes` | WALT load-tracking tuning. |
-| `persist.azenithconf.DThermal` | Custom thermal handling. |
-| `persist.azenithconf.SFL` | SurfaceFlinger tuning. |
-| `persist.azenithconf.malisched` | Mali scheduler tweaks. |
-| `persist.azenithconf.fpsged` | FPSGO / GED tuning (MediaTek). |
-| `persist.azenithconf.schedtunes` | Scheduler tuning bundle. |
-| `persist.azenithconf.justintime` | JIT tweaks. |
-| `persist.azenithconf.disabletrace` | Disable kernel tracing nodes. |
-| `persist.azenithconf.usefpsgo` | `0` turns FPSGO off in the performance profile (MediaTek). |
-| `persist.azenithconf.renderer` | HWUI/renderer backend, see below. |
-| `persist.azenithconf.schemeconfig` | Display colour preset, see below. |
+| `persist.sys.azenithConfIntg.litemode` | Lite mode (CPU limiting path). |
+| `persist.sys.azenithConfIntg.clearbg` | Clear background apps in the performance profile. |
+| `persist.sys.azenithConfIntg.freqoffset` | Frequency ceiling in percent, `10`–`100`. `100` or `Disabled` = no limit. |
+| `persist.sys.azenithConfIntg.fstrim` | Whether the module requests the periodic `fstrim` run. |
+| `persist.sys.azenithConfIntg.logd` | Stop the logger services (`logd` and friends) while gaming. |
+| `persist.sys.azenithConfIntg.walttunes` | WALT load-tracking tuning. |
+| `persist.sys.azenithConfIntg.DThermal` | Custom thermal handling. |
+| `persist.sys.azenithConfIntg.SFL` | SurfaceFlinger tuning. |
+| `persist.sys.azenithConfIntg.malisched` | Mali scheduler tweaks. |
+| `persist.sys.azenithConfIntg.fpsged` | FPSGO / GED tuning (MediaTek). |
+| `persist.sys.azenithConfIntg.schedtunes` | Scheduler tuning bundle. |
+| `persist.sys.azenithConfIntg.justintime` | JIT tweaks. |
+| `persist.sys.azenithConfIntg.disabletrace` | Disable kernel tracing nodes. |
+| `persist.sys.azenithConfIntg.usefpsgo` | `0` turns FPSGO off in the performance profile (MediaTek). |
+| `persist.sys.azenithConfIntg.renderer` | HWUI/renderer backend, see below. |
+| `persist.sys.azenithConfIntg.schemeconfig` | Display colour preset, see below. |
 
-### `persist.azenithconf.renderer`
+### `persist.sys.azenithConfIntg.renderer`
 
 `default` or empty resets everything.
 
@@ -97,7 +99,7 @@ longer accepted commands.
 Any other value falls back to a substring check: names containing `vk`/`vulkan` get Vulkan,
 names containing `gl`/`gles` get GLES.
 
-### `persist.azenithconf.schemeconfig`
+### `persist.sys.azenithConfIntg.schemeconfig`
 
 Display colour scheme, read once during `initialize`. It accepts a preset **name** only:
 

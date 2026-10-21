@@ -7,7 +7,7 @@
 //!
 //! The required order:
 //!
-//! 1. Guard `persist.azenith.disabletweak`
+//! 1. Guard `persist.sys.azenithIntg.disabletweak`
 //! 2. Resolve CPU governor, I/O scheduler and Mali GPU from each profile's props
 //! 3. `apply_{balanced,performance,powersave}_governor`
 //! 4. [`apply_cpu_freq`]

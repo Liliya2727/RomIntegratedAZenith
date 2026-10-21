@@ -71,21 +71,24 @@ Define the file contexts in:
 /vendor/bin/AZenith_config               u:object_r:vendor_shell_exec:s0
 ```
 
-Define the property contexts in:
+`persist.sys.` is already claimed by the platform policy: `plat_property_contexts` maps
+`persist.sys.` to `system_prop`, so **do not** add the AZenith prefixes to
+`vendor_property_context` — vendor property contexts cannot override a platform-owned prefix,
+and the build rejects the overlap.
 
-```
-/vendor/etc/selinux/vendor_property_context
+The service therefore needs access to `system_prop` instead, in `vendor_sepolicy.cil`:
+
+```cil
+(allow azenith_service system_prop (file (getattr map open read)))
+(allow azenith_service system_prop (property_service (set)))
 ```
 
-```text
-sys.azenith.           u:object_r:azenith_prop:s0
-persist.azenith.       u:object_r:azenith_prop:s0
-persist.azenithconf.   u:object_r:azenith_prop:s0
-```
+Both prefixes (`persist.sys.azenithIntg.*` for daemon state, `persist.sys.azenithConfIntg.*`
+for the tweak toggles) resolve to that one type, so those two rules cover all of them. Apps and
+`shell` already read `system_prop` through the platform policy.
 
-Property names are prefix-matched, so `persist.azenith.` does **not** cover
-`persist.azenithconf.*` (there is no dot after `azenith` there) — you need the
-third line, otherwise the `azenithconf` toggles get denied.
+If your build trips a `neverallow` on `system_prop` writes, whitelist `azenith_service` the
+same way your ROM already handles its other system property writers.
 
 ---
 

@@ -1,4 +1,4 @@
-//! `persist.azenithconf.schemeconfig` — the display colour scheme.
+//! `persist.sys.azenithConfIntg.schemeconfig` — the display colour scheme.
 //!
 //! The property holds one of the preset *names* the AZenith app offers:
 //! `default`, `vivid`, `warm`, `cool`, `amoled`. It is matched case-insensitively
@@ -30,7 +30,7 @@ const SCHEME_PRESETS: &[(&str, [u32; 4])] = &[
 /// Resolve the property to `Some(R G B S)` when the daemon should apply a
 /// scheme, or `None` when it must leave the display alone.
 pub(crate) fn schemeconfig() -> Option<[u32; 4]> {
-    let raw = getprop("persist.azenithconf.schemeconfig");
+    let raw = getprop("persist.sys.azenithConfIntg.schemeconfig");
     let value = raw.trim();
     if value.is_empty() {
         return Some(SCHEME_DEFAULT);

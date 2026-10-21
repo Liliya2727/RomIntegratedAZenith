@@ -27,7 +27,7 @@ const LOGCAT_TAG: &str = "AZenith";
 
 /// Property that turns DEBUG detail on (`true`). The `LIBBINDING_LOG`
 /// environment variable overrides it for a single invocation.
-const DEBUGMODE_PROP: &str = "persist.azenith.debugmode";
+const DEBUGMODE_PROP: &str = "persist.sys.azenithIntg.debugmode";
 
 #[derive(Clone, Copy)]
 #[repr(u8)]
@@ -130,7 +130,7 @@ pub(crate) fn log_init() {
 
 /// `true` when DEBUG detail should be produced at all.
 ///
-/// Driven by the `persist.azenith.debugmode` property alone, so flipping the
+/// Driven by the `persist.sys.azenithIntg.debugmode` property alone, so flipping the
 /// prop and restarting the service is the one way to turn verbose logging on.
 pub(crate) fn debugmode() -> bool {
     crate::common::prop::getprop(DEBUGMODE_PROP) == "true"

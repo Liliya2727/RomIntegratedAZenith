@@ -9,7 +9,7 @@ Download from [Github Releases](https://github.com/Liliya2727/RomIntegratedAZeni
 2. Place init.azenith.rc to /vendor/etc/init/
 3. Place AZenith_Profiler and AZenith_config to /vendor/bin/
 4. Patch vendor [sepolicy](sepolicyguide.md)
-5. In /vendor/build.prop add "persist.azenith.state" prop value 1 for enabled, and value 0 for disabled
+5. In /vendor/build.prop add "persist.sys.azenithIntg.state" prop value 1 for enabled, and value 0 for disabled
 6. To enable other tweaks and customization refer to the [properties list](listproperties.md)
 7. Repack Vendor
 
@@ -80,8 +80,8 @@ Each line is prefixed with the component that emitted it, e.g. `[daemon.profiler
 Verbose (DEBUG) output is opt-in through a single property, no flag file involved:
 
 ```
-setprop persist.azenith.debugmode true   # enable DEBUG
-setprop persist.azenith.debugmode false  # back to info
+setprop persist.sys.azenithIntg.debugmode true   # enable DEBUG
+setprop persist.sys.azenithIntg.debugmode false  # back to info
 ```
 
 Restart the service after flipping it. For a one-off run of a companion command you can also

@@ -681,7 +681,7 @@ fn apply_disable_trace() {
 }
 
 fn apply_logd() {
-    if state_enabled(&get_state("persist.azenithconf.logd")) {
+    if state_enabled(&get_state("persist.sys.azenithConfIntg.logd")) {
         log_info(comp::PREFS_LOGD, "stopping logger services");
         for logger in &LIST_LOGGER {
             let _ = Command::new("stop").arg(logger).status();
@@ -694,14 +694,14 @@ fn apply_logd() {
 }
 
 pub fn prefsettings() -> bool {
-    let walt_state = get_state("persist.azenithconf.walttunes");
-    let dthermal_state = get_state("persist.azenithconf.DThermal");
-    let sfl_state = get_state("persist.azenithconf.SFL");
-    let malisched_state = get_state("persist.azenithconf.malisched");
-    let fpsged_state = get_state("persist.azenithconf.fpsged");
-    let schedtunes_state = get_state("persist.azenithconf.schedtunes");
-    let justintime_state = get_state("persist.azenithconf.justintime");
-    let disabletrace_state = get_state("persist.azenithconf.disabletrace");
+    let walt_state = get_state("persist.sys.azenithConfIntg.walttunes");
+    let dthermal_state = get_state("persist.sys.azenithConfIntg.DThermal");
+    let sfl_state = get_state("persist.sys.azenithConfIntg.SFL");
+    let malisched_state = get_state("persist.sys.azenithConfIntg.malisched");
+    let fpsged_state = get_state("persist.sys.azenithConfIntg.fpsged");
+    let schedtunes_state = get_state("persist.sys.azenithConfIntg.schedtunes");
+    let justintime_state = get_state("persist.sys.azenithConfIntg.justintime");
+    let disabletrace_state = get_state("persist.sys.azenithConfIntg.disabletrace");
 
     if state_enabled(&justintime_state) {
         apply_jit();

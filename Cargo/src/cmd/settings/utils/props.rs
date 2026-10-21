@@ -39,7 +39,7 @@ pub(crate) fn setprop(key: &str, val: &str) {
 /// Frequency offset ceiling in percent (100 = no limit). `Disabled`/empty and
 /// anything unparsable fall back to no limit instead of failing the profile.
 pub(crate) fn get_limiter() -> u64 {
-    let val = getprop("persist.azenithconf.freqoffset");
+    let val = getprop("persist.sys.azenithConfIntg.freqoffset");
     if val == "Disabled" || val.is_empty() {
         100
     } else {
@@ -48,11 +48,11 @@ pub(crate) fn get_limiter() -> u64 {
 }
 
 pub(crate) fn get_clearapps() -> bool {
-    getprop("persist.azenithconf.clearbg") == "1"
+    getprop("persist.sys.azenithConfIntg.clearbg") == "1"
 }
 
 pub(crate) fn get_litemode() -> bool {
-    getprop("persist.azenithconf.litemode") == "1"
+    getprop("persist.sys.azenithConfIntg.litemode") == "1"
 }
 
 pub(crate) fn get_curprofile() -> String {
@@ -62,7 +62,7 @@ pub(crate) fn get_curprofile() -> String {
         .to_string()
 }
 
-/// Master switch: `persist.azenith.disabletweak = 1` disables every tweak.
+/// Master switch: `persist.sys.azenithIntg.disabletweak = 1` disables every tweak.
 pub(crate) fn is_tweak_disabled() -> bool {
-    getprop("persist.azenith.disabletweak") == "1"
+    getprop("persist.sys.azenithIntg.disabletweak") == "1"
 }

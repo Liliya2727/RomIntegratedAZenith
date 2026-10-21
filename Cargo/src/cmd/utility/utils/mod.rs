@@ -15,9 +15,9 @@ use glob::glob;
 use crate::common::log::comp;
 use crate::common::{fs as common_fs, prop, shell};
 
-/// `persist.azenithconf.fstrim` — whether the module wants the trim run.
+/// `persist.sys.azenithConfIntg.fstrim` — whether the module wants the trim run.
 pub(crate) fn get_fstrim_state() -> String {
-    prop::getprop("persist.azenithconf.fstrim")
+    prop::getprop("persist.sys.azenithConfIntg.fstrim")
 }
 
 /// Apply the CPU governor to every policy, then log the outcome once.
@@ -125,7 +125,7 @@ pub(crate) fn restartservice() {
     let _ = shell::system(comp::UTILITY_SHELL, "pkill -9 -f sys.azenith-service");
     let _ = shell::system(comp::UTILITY_SHELL, "pkill -9 -f sys.azenith-appmonitoring");
 
-    prop::setprop("persist.azenith.state", "stopped");
+    prop::setprop("persist.sys.azenithIntg.state", "stopped");
 
     if shell::system(comp::UTILITY_SHELL, "sh /data/adb/modules/AZenith/service.sh &") != 0 {
         log_error(comp::DAEMON, "service restart failed");

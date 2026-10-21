@@ -36,7 +36,7 @@ fn subcommand(name: &str) -> Option<&'static str> {
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
 
-    // Pick up `LIBBINDING_LOG` / `persist.azenith.debugmode` before anything can
+    // Pick up `LIBBINDING_LOG` / `persist.sys.azenithIntg.debugmode` before anything can
     // log: the companion commands run before the daemon init below, and without
     // this their DEBUG lines were dropped by the default Info level.
     log_init();

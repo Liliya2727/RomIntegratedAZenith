@@ -7,6 +7,10 @@
 (typepermissive azenith_service)
 (allow azenith_service azenith_prop (file (getattr map open read)))
 (allow azenith_service azenith_prop (property_service (set)))
+;; persist.sys.* is owned by the platform (plat_property_contexts -> system_prop), so the
+;; AZenith properties are checked against system_prop, not azenith_prop.
+(allow azenith_service system_prop (file (getattr map open read)))
+(allow azenith_service system_prop (property_service (set)))
 (allow init azenith_prop (property_service (set)))
 (allow vendor_init azenith_prop (property_service (set)))
 (allow vendor_init azenith_prop (file (read)))

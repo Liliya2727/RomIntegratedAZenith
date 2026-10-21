@@ -44,7 +44,7 @@ pub fn balanced_profile() {
     apply_cpu_freq(CpuFreqMode::Normal);
 
     // 5. Log frequency mode
-    if getprop("persist.azenithconf.freqoffset") == "Disabled" {
+    if getprop("persist.sys.azenithConfIntg.freqoffset") == "Disabled" {
         log_info(comp::SETTINGS_CPU, &format!("set freq mode=normal"));
     } else {
         log_info(comp::SETTINGS_CPU, &format!("set freq mode=normal_selected"));
