@@ -3,11 +3,17 @@
 # Assemble the AZenith package zip from the artifacts produced by the
 # previous workflow steps:
 #
-#   Resolver  -> Binder Resolver APK (staged as Cargo/binder_resolver.apk)
-#   Cargo     -> Cargo/target/aarch64-linux-android/release/sys_azenithrs-service
+#   Cargo -> Cargo/target/aarch64-linux-android/release/sys_azenithrs-service
+#
+# Build-only inputs, deliberately NOT shipped:
+#   * Cargo/binder_resolver.apk — embedded into the binary by include_bytes!
+#     (src/daemon/codes.rs); the daemon writes it under BASE_DIR when it needs
+#     to resolve codes and deletes it afterwards.
+#   * Config.toml — resolved at compile time by build.rs into $OUT_DIR/paths.rs,
+#     its values are already baked into the binary.
 #
 # The tree staged here is what a ROM integrator extracts; file names match
-# what init.azenith.rc and Config.toml expect at runtime.
+# what init.azenith.rc and the compiled-in paths expect at runtime.
 
 set -euo pipefail
 
@@ -22,16 +28,11 @@ cd "$GITHUB_WORKSPACE" || {
 	exit 1
 }
 
-# ---- inputs built by earlier steps -------------------------------------
+# ---- input built by the earlier cargo-ndk step --------------------------
 BINARY="Cargo/target/aarch64-linux-android/release/sys_azenithrs-service"
-APK="Cargo/binder_resolver.apk"
 
 if [ ! -f "$BINARY" ]; then
 	echo "Rust binary not found: $BINARY (did 'cargo ndk build --release' run?)" >&2
-	exit 1
-fi
-if [ ! -f "$APK" ]; then
-	echo "Binder Resolver APK not found: $APK (did the gradle step run?)" >&2
 	exit 1
 fi
 
@@ -50,10 +51,11 @@ install -Dm755 "$BINARY" modules/bin/hw/vendor.azenith-service
 # /vendor/etc/init/init.azenith.rc
 install -Dm644 init.azenith.rc modules/init/init.azenith.rc
 
-# Runtime files -> land under BASE_DIR (see Config.toml). binder_resolver.apk
-# is also embedded in the binary, but the daemon rewrites it at runtime, so it
-# ships as a plain file too.
-install -Dm644 "$APK" modules/binder_resolver.apk
+# Runtime files -> land under BASE_DIR (see Config.toml).
+#
+# NOTE: binder_resolver.apk is deliberately NOT shipped. It is embedded in the
+# binary (include_bytes! in src/daemon/codes.rs) and the daemon writes it to
+# BASE_DIR itself when it needs to resolve codes, then deletes it.
 install -Dm644 gamelist.txt modules/gamelist/gamelist.txt
 
 # SELinux policy + docs for the integrator
@@ -64,9 +66,6 @@ install -Dm644 README.md modules/README.md
 install -Dm644 changelog.md modules/changelog.md
 install -Dm644 listproperties.md modules/listproperties.md
 install -Dm644 sepolicyguide.md modules/sepolicyguide.md
-
-# Record the build configuration that was baked into the binary
-install -Dm644 Config.toml modules/Config.toml
 
 # Remove .sh extension from helper scripts, if any get added to modules/bin
 find modules/bin -maxdepth 1 -type f -name "*.sh" -exec sh -c 'mv -- "$0" "${0%.sh}"' {} \;
