@@ -7,9 +7,10 @@ use std::process::Command;
 
 use crate::common::log::{log_write, Lv};
 
-/// `PATH` for every forked shell. The command runs as root, so the module
-/// manager's own bin directories have to be searched explicitly.
-pub(crate) const PATH: &str = "/system/bin:/system/xbin:/data/adb/ap/bin:/data/adb/ksu/bin:/data/adb/magisk:/debug_ramdisk:/sbin:/sbin/su:/su/bin:/su/xbin:/data/data/com.termux/files/usr/bin";
+/// `PATH` for every forked shell (`vdc`, `sm`, `cmd`, `am`, and the toybox
+/// helpers). Mirrors what Android's init exports, so nothing depends on a
+/// module manager or a Termux install being present.
+pub(crate) const PATH: &str = "/product/bin:/apex/com.android.runtime/bin:/apex/com.android.art/bin:/system_ext/bin:/system/bin:/system/xbin:/odm/bin:/vendor/bin:/vendor/xbin";
 
 /// Run `command` and return its exit status (`-1` when it could not be run).
 /// `component` is the caller's tag, so the line names the subsystem that
