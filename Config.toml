@@ -57,15 +57,8 @@ DAEMON_LOCK = ".lock"
 CODES_CACHE = "codes"
 
 # ---------------------------------------------------------------------
-#  State files (relative to BASE_DIR)
+#  Daemon files (relative to BASE_DIR)
 # ---------------------------------------------------------------------
-# Currently applied profile, written by the profiler worker.
-CUR_PROF = "current_profile"
-# Package currently in the foreground.
-ACTIVE_APP = "active_app"
-# Profile state store (profile 1/2/3, screen/saver/zen, ...).
-STATE_FILE = "device_info.toml"
-
 # Binder resolver APK, extracted from the binary and run through
 # app_process to resolve transaction codes.
 BINDER_RESOLVER_APK = "binder_resolver.apk"
@@ -75,9 +68,14 @@ BINDER_RESOLVER_APK = "binder_resolver.apk"
 # ---------------------------------------------------------------------
 # One package name per line. Changing GAMELIST_DIR above moves this file too.
 GAMELIST_FILE = "gamelist.txt"
-# Written by run_profiler(), read by the other subcommands.
+# Applied profile as a mode number, written by the profiler worker.
 CURRENT_PROFILE = "current_profile"
+# Foreground package, "<pkg> <pid> <uid>" plus a timestamp.
 GAMEINFO = "gameinfo"
+# State store for other instances (profile, active app, screen/saver/zen,
+# battery). Sits in API_DIR next to CURRENT_PROFILE and GAMEINFO, so every
+# runtime state file lives in one place.
+STATE_FILE = "device_info.toml"
 
 [DEVICE]
 # SoC family whose tweak set is applied whenever a profile runs.

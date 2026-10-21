@@ -15,6 +15,10 @@ Resolver/build/
 Resolver/app/build/
 Resolver/local.properties
 
-# NOTE: Cargo/binder_resolver.apk stays TRACKED on purpose —
-# src/daemon/codes.rs embeds it with include_bytes!(), so a fresh checkout
-# without it cannot compile. CI rebuilds and overwrites it before cargo runs.
+# Binder resolver APK — built from Resolver/, NOT committed. It gets embedded
+# into the binary with include_bytes! (src/daemon/codes.rs), so copy the gradle
+# output here before building locally:
+#   cd Resolver && ./gradlew assembleRelease
+#   cp app/build/outputs/apk/release/app-release-unsigned.apk ../Cargo/binder_resolver.apk
+# CI stages it automatically before `cargo ndk build`.
+Cargo/binder_resolver.apk

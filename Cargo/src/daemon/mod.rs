@@ -11,7 +11,7 @@
 //! | `applist` | `GameRegistry` / `InotifyWatcher` — `gamelist.txt` |
 //! | `apps` | installed-package scan for the first-boot `gamelist.txt` |
 //! | `status` | `BinderMonitor.cpp` — screen, saver, zen, battery |
-//! | `state` | `state.toml` + `active_app`, the state store |
+//! | `state` | `state.toml`, the state store |
 //! | `profiler` | `profile/*.c` — profile switching |
 //!
 //! Its companion commands (`sys.azenith-service profilesettings ...` and

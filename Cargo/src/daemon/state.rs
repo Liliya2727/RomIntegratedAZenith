@@ -9,12 +9,12 @@ use crate::common::log::{comp, debug, error, info};
 use crate::daemon::profiler;
 
 // Digenerate dari Config.toml (lihat Cargo/build.rs dan crate::common::paths).
-use crate::common::paths::{ACTIVE_APP, STATE_FILE};
+use crate::common::paths::STATE_FILE;
 
 pub(crate) struct St {
     pub(crate) list: BTreeSet<String>,                    // packages in the gamelist
     pub(crate) active: Option<(String, BTreeSet<i32>)>,   // (package, live pids) of the active app
-    last: String,                                         // last active app written to active_app
+    last: String,                                         // last active app recorded in state.toml
 }
 static ST: Mutex<St> = Mutex::new(St { list: BTreeSet::new(), active: None, last: String::new() });
 pub(crate) fn st() -> MutexGuard<'static, St> { ST.lock().unwrap_or_else(|e| e.into_inner()) }
@@ -99,17 +99,15 @@ pub(crate) fn sys_update(why: &str, f: impl FnOnce(&mut SysStat)) {
     write_state(&pkg, why);
 }
 
-// Persist the active app, then let the profiler decide the profile (1/2/3).
+// Update the active app, then let the profiler decide the profile (1/2/3).
 pub(crate) fn apply(s: &mut St, why: &str) {
     let pkg = active_pkg(&s.active);
     if pkg != s.last {
-        if write_atomic(ACTIVE_APP, &pkg) {
-            let from = if s.last.is_empty() { "(none)" } else { s.last.as_str() };
-            info!(comp::STATE, "active app: [{from}] -> [{pkg}] ({why})");
-            s.last = pkg.clone();
-        }
+        let from = if s.last.is_empty() { "(none)" } else { s.last.as_str() };
+        info!(comp::STATE, "active app: [{from}] -> [{pkg}] ({why})");
+        s.last = pkg.clone();
     } else {
-        debug!(comp::STATE, "active app unchanged ({pkg}), skipping write [{why}]");
+        debug!(comp::STATE, "active app unchanged ({pkg}) [{why}]");
     }
     profiler::checkup(&s.active, why);
     write_state(&pkg, why);

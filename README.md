@@ -32,11 +32,26 @@ Rules:
 - Any other value is relative to its parent (`BASE_DIR`, `GAMELIST_DIR` or `API_DIR`).
 - An empty string means "use the parent path".
 
-That means changing `BASE_DIR` alone relocates the whole tree (`state.toml`, `gamelist/`,
-`API/`, the binder resolver cache, the instance lock), and files declared relative to a directory
+That means changing `BASE_DIR` alone relocates the whole tree (`gamelist/`, `API/` — which
+holds `current_profile`, `gameinfo` and `device_info.toml` — plus the binder resolver cache
+and the instance lock), and files declared relative to a directory
 you overrode keep following it. `Cargo/build.rs` resolves everything at compile time and generates
 `$OUT_DIR/paths.rs`; an invalid (non-absolute) path falls back to the default and prints a
 `cargo:warning`. Delete any key you do not care about — the defaults are applied automatically.
+
+### Building locally
+
+The Binder Resolver APK is not committed — it is embedded into the binary with
+`include_bytes!`, so build it first and drop it into `Cargo/`:
+
+```sh
+cd Resolver && ./gradlew assembleRelease
+cp app/build/outputs/apk/release/app-release-unsigned.apk ../Cargo/binder_resolver.apk
+cargo ndk -t arm64-v8a build --release   # plain `cargo build` for a host build
+```
+
+If it is missing, `Cargo/build.rs` stops with that exact recipe. CI stages the APK
+automatically before `cargo ndk build`.
 
 ### Choosing your chipset
 

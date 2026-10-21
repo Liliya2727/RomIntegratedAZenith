@@ -34,9 +34,9 @@ const DIR_KEYS: &[(&str, &str, Option<&str>)] = &[
 const FILE_KEYS: &[(&str, &str, &str)] = &[
     ("DAEMON_LOCK", "daemon.lock", "BASE_DIR"),
     ("CODES_CACHE", "codes", "BASE_DIR"),
-    ("CUR_PROF", "cur_prof", "BASE_DIR"),
-    ("ACTIVE_APP", "active_app", "BASE_DIR"),
-    ("STATE_FILE", "state.toml", "BASE_DIR"),
+    // state store — lives in API_DIR with CURRENT_PROFILE/GAMEINFO, since it
+    // carries the same information (active app, applied profile) they do.
+    ("STATE_FILE", "state.toml", "API_DIR"),
     ("BINDER_RESOLVER_APK", "binder_resolver.apk", "BASE_DIR"),
     ("GAMELIST_FILE", "gamelist.txt", "GAMELIST_DIR"),
     ("CURRENT_PROFILE", "current_profile", "API_DIR"),
@@ -67,6 +67,23 @@ const SOC_ALIASES: &[(&str, &str)] = &[
 
 fn main() {
     let manifest = PathBuf::from(env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"));
+
+    // src/daemon/codes.rs nge-embed file ini lewat include_bytes!(). File-nya tidak
+    // ikut di repo (CI menyalinnya dari hasil build Resolver/ sebelum cargo jalan),
+    // jadi dicek di sini dulu — daripada error-nya cuma nunjuk baris .rs yang bikin
+    // bingung.
+    let apk = manifest.join("binder_resolver.apk");
+    println!("cargo:rerun-if-changed={}", apk.display());
+    if !apk.is_file() {
+        panic!(
+            "Cargo/binder_resolver.apk tidak ada.\n\
+             Build Binder Resolver dulu, lalu salin APK-nya:\n  \
+             cd Resolver && ./gradlew assembleRelease\n  \
+             cp app/build/outputs/apk/release/app-release-unsigned.apk ../Cargo/binder_resolver.apk\n\
+             (CI melakukannya otomatis di step \"Stage Binder Resolver APK\")"
+        );
+    }
+
     let config = manifest.join("..").join("Config.toml");
     println!("cargo:rerun-if-changed={}", config.display());
 

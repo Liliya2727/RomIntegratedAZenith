@@ -17,7 +17,7 @@ use crate::common::log::{comp, debug, error, info, warn};
 use crate::daemon::state::{saver, screen, write_atomic};
 
 // Digenerate dari Config.toml (lihat Cargo/build.rs dan crate::common::paths).
-pub(crate) use crate::common::paths::{CURRENT_PROFILE as PROFILE_FILE, CUR_PROF, GAMEINFO as GAMEINFO_FILE};
+pub(crate) use crate::common::paths::{CURRENT_PROFILE as PROFILE_FILE, GAMEINFO as GAMEINFO_FILE};
 /// Subcommand of the merged service binary that used to be
 /// `sys.azenith-profilesettings`.
 const PROFILESETTINGS: &str = crate::cmd::PROFILESETTINGS;
@@ -142,7 +142,6 @@ fn apply(mode: u8, active: &Option<(String, BTreeSet<i32>)>, why: &str) {
     info!(comp::PROFILER, "profile: [{}] -> [{}] ({why})", mode_name(from), mode_name(mode));
     write_gameinfo(active);
     write_atomic(PROFILE_FILE, &format!("{mode}\n"));
-    write_atomic(CUR_PROF, &format!("{mode}\n"));
     queue_profilesettings(mode);
 }
 
