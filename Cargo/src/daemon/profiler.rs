@@ -145,6 +145,14 @@ fn apply(mode: u8, active: &Option<(String, BTreeSet<i32>)>, why: &str) {
     queue_profilesettings(mode);
 }
 
+/// Force a re-apply even when the mode has not changed, so a config change made
+/// through the AIDL service takes effect now instead of at the next app switch.
+pub(crate) fn force_reapply(why: &str) {
+    *CUR.lock().unwrap_or_else(|e| e.into_inner()) = 0;
+    let active = crate::daemon::state::st().active.clone();
+    checkup(&active, why);
+}
+
 // Decide the profile from the current state. Called after every foreground/died/status change.
 pub(crate) fn checkup(active: &Option<(String, BTreeSet<i32>)>, why: &str) {
     let cur = *CUR.lock().unwrap_or_else(|e| e.into_inner());

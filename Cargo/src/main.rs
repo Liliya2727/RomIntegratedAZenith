@@ -121,6 +121,7 @@ fn main() {
     daemon::profiler::run_initialize();
 
     unsafe { (n.ABinderProcess_startThreadPool)(); }
+    daemon::api::start_binder_server(); // hosted AIDL service via rsbinder
     daemon::profiler::init(); // worker that applies profiles via the profilesettings subcommand
     init_status(); // register binder callbacks (screen/saver/zen) + read initial status
     adopt("start"); // write initial state (profile 1/2/3, or 2/NULL if no game is on screen)

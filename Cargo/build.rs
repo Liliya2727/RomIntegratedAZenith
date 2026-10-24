@@ -21,6 +21,35 @@ use std::env;
 use std::fs;
 use std::path::PathBuf;
 
+fn generate_aidl_bindings() {
+    let aidl_dir = PathBuf::from("aidl");
+    println!("cargo:rerun-if-changed=aidl/");
+
+    let mut sources = Vec::new();
+    collect_aidl(&aidl_dir, &mut sources);
+    sources.sort();
+
+    let out_file = PathBuf::from(env::var("OUT_DIR").expect("OUT_DIR")).join("bindings.rs");
+    let builder = sources.iter().fold(rsbinder_aidl::Builder::new(), |b, p| b.source(p));
+    builder
+        .include_dir(&aidl_dir)
+        .output(&out_file)
+        .generate()
+        .expect("Failed to generate AIDL bindings");
+}
+
+fn collect_aidl(dir: &std::path::Path, out: &mut Vec<PathBuf>) {
+    let Ok(entries) = std::fs::read_dir(dir) else { return };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            collect_aidl(&path, out);
+        } else if path.extension().map(|s| s == "aidl").unwrap_or(false) {
+            out.push(path);
+        }
+    }
+}
+
 /// Directory keys: (constant name = key name, default, parent).
 /// A `None` parent means this key is the root (`BASE_DIR`) and its value must be absolute.
 const DIR_KEYS: &[(&str, &str, Option<&str>)] = &[
@@ -67,6 +96,8 @@ const SOC_ALIASES: &[(&str, &str)] = &[
 ];
 
 fn main() {
+    generate_aidl_bindings();
+
     let manifest = PathBuf::from(env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"));
 
     // src/daemon/codes.rs embeds this file with include_bytes!(). It is not part

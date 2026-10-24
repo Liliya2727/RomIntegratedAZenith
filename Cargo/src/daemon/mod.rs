@@ -18,6 +18,7 @@
 //! friends) live in [`crate::cmd`], the shared plumbing in [`crate::common`].
 
 pub(crate) mod applist;
+pub(crate) mod api;
 pub(crate) mod apps;
 pub(crate) mod codes;
 pub(crate) mod ndk;

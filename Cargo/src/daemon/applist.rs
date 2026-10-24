@@ -28,6 +28,20 @@ fn parse_list(text: &str) -> BTreeSet<String> {
         .collect()
 }
 
+/// Add or remove one package, persist it, and reload. The write is an in-place
+/// `fs::write`, which is what the inotify watch needs (IN_CLOSE_WRITE).
+pub(crate) fn set_game(pkg: &str, enabled: bool) -> bool {
+    let mut list = st().list.clone();
+    if enabled { list.insert(pkg.to_string()); } else { list.remove(pkg); }
+    if !write_list(&list) { return false; }
+    reload_list();
+    true
+}
+
+pub(crate) fn games() -> Vec<String> {
+    st().list.iter().cloned().collect()
+}
+
 pub(crate) fn reload_list() {
     let text = match fs::read_to_string(LIST_FILE) {
         Ok(t) => t,
@@ -58,7 +72,7 @@ pub(crate) fn reload_list() {
 
 /// Overwrite `gamelist.txt` with `packages`, one per line. Only called when the
 /// caller is sure the old contents should go away (first boot / manual rerun).
-fn write_list(packages: &BTreeSet<String>) -> bool {
+pub(crate) fn write_list(packages: &BTreeSet<String>) -> bool {
     let mut body = String::new();
     for pkg in packages {
         body.push_str(pkg);
