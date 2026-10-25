@@ -113,12 +113,6 @@ pub(crate) fn apply(s: &mut St, why: &str) {
     write_state(&pkg, why);
 }
 
-pub(crate) fn sync_state(why: &str) {
-    let active = st().active.clone();
-    let pkg = active_pkg(&active);
-    write_state(&pkg, why);
-}
-
 // App from the gamelist currently on screen (oom_score_adj 0). Only called on start / gamelist change.
 //
 // Note that this is a third answer to "is this package a game?", next to the

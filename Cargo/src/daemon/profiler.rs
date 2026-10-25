@@ -171,7 +171,6 @@ fn apply(mode: u8, active: &Option<(String, BTreeSet<i32>)>, why: &str) {
     write_atomic(PROFILE_FILE, &format!("{mode}\n"));
     queue_profilesettings(mode);
     broadcast_profile_change(mode, active);
-    crate::daemon::state::sync_state(why);
 }
 
 fn broadcast_profile_change(mode: u8, active: &Option<(String, BTreeSet<i32>)>) {
@@ -181,7 +180,7 @@ fn broadcast_profile_change(mode: u8, active: &Option<(String, BTreeSet<i32>)>) 
         _ => String::new(),
     };
     let cmd = format!(
-        "am broadcast -a com.rianixia.settings.SHOW_NOTIFICATION -n com.rianixia.settings.overlay/com.rianixia.settings.overlay.OverlayService --es category azenith --es profile {mode_str}{pkg_arg}"
+        "am broadcast --user 0 -a com.rianixia.settings.SHOW_NOTIFICATION -n com.rianixia.settings.overlay/com.rianixia.settings.overlay.OverlayService --es category azenith --es profile {mode_str}{pkg_arg} &"
     );
     std::thread::spawn(move || {
         let _ = crate::common::shell::system(comp::PROFILER, &cmd);
@@ -197,9 +196,7 @@ pub(crate) fn force_reapply(why: &str) {
     if s.active.is_none() {
         s.active = crate::daemon::state::scan_foreground(&s.list).map(|(pid, pkg)| (pkg, BTreeSet::from([pid])));
     }
-    let active = s.active.clone();
-    drop(g);
-    checkup(&active, why);
+    crate::daemon::state::apply(s, why);
 }
 
 // Decide the profile from the current state. Called after every foreground/died/status change.
@@ -252,6 +249,6 @@ pub(crate) fn tick() {
     if !expired { return; }
     info!(comp::PROFILER, "grace period expired, dropping performance");
     *GRACE.lock().unwrap_or_else(|e| e.into_inner()) = None;
-    let active = crate::daemon::state::st().active.clone();
-    checkup(&active, "grace period expired");
+    let mut g = crate::daemon::state::st();
+    crate::daemon::state::apply(&mut *g, "grace period expired");
 }

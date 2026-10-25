@@ -57,33 +57,47 @@ pub(crate) unsafe extern "C" fn on_observer(_b: P, code: u32, inp: P, _o: P) -> 
             (n.AParcel_readBool)(inp, &mut fg);
             debug!(comp::OBSERVER, "onForegroundActivitiesChanged: pid={pid} uid={uid} fg={fg}");
 
-            if fg && is_app(uid) {
-                // Only "went to foreground" events change the active app.
-                match pkg_of_uid(uid) {
+            let mut g = st();
+            let s = &mut *g;
+
+            if fg {
+                let pkg_opt = if is_app(uid) { pkg_of_uid(uid) } else { None };
+                match pkg_opt {
+                    Some(pkg) if s.list.contains(&pkg) => {
+                        let same = matches!(&s.active, Some((p, _)) if *p == pkg);
+                        if same {
+                            if let Some((_, pids)) = &mut s.active { pids.insert(pid); }
+                        } else {
+                            info!(comp::OBSERVER, "gamelist app went to foreground: {pkg} (pid {pid})");
+                            s.active = Some((pkg, BTreeSet::from([pid])));
+                        }
+                        apply(s, "foreground");
+                    }
                     Some(pkg) => {
-                        let mut g = st();
-                        let s = &mut *g;
-                        if s.list.contains(&pkg) {
-                            let same = matches!(&s.active, Some((p, _)) if *p == pkg);
-                            if same {
-                                if let Some((_, pids)) = &mut s.active { pids.insert(pid); }
-                            } else {
-                                info!(comp::OBSERVER, "gamelist app went to foreground: {pkg} (pid {pid})");
-                                s.active = Some((pkg, BTreeSet::from([pid])));
-                            }
-                            apply(s, "foreground");
+                        if let Some((prev_pkg, _)) = s.active.take() {
+                            info!(comp::OBSERVER, "leaving game {prev_pkg} -> non-game fg: {pkg}");
+                            apply(s, "non-game foreground");
                         } else {
                             debug!(comp::OBSERVER, "fg pkg {pkg} not in gamelist, ignored");
                         }
                     }
-                    None => debug!(comp::OBSERVER, "fg uid={uid}: package name not found"),
+                    None => {
+                        if let Some((prev_pkg, _)) = s.active.take() {
+                            info!(comp::OBSERVER, "leaving game {prev_pkg} -> system fg (uid {uid})");
+                            apply(s, "system foreground");
+                        }
+                    }
                 }
             } else if !fg {
-                // Going to background is intentionally ignored: the active app persists
-                // until all of its processes die.
-                let g = st();
-                if matches!(&g.active, Some((_, pids)) if pids.contains(&pid)) {
-                    debug!(comp::OBSERVER, "active app pid={pid} went to background, keeping profile 1");
+                let active_pid_gone = match &mut s.active {
+                    Some((_, pids)) => pids.remove(&pid) && pids.is_empty(),
+                    None => false,
+                };
+                if active_pid_gone {
+                    if let Some((pkg, _)) = s.active.take() {
+                        info!(comp::OBSERVER, "active app went to background: {pkg} (pid {pid})");
+                        apply(s, "active app background");
+                    }
                 }
             }
             return 0;
