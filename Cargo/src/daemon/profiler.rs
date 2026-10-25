@@ -41,22 +41,28 @@ static TX: Mutex<Option<mpsc::Sender<u8>>> = Mutex::new(None); // profile worker
 /// gate stops the daemon from ever deciding a profile — no apply, no subcommand,
 /// no kernel writes at all. The process stays alive and keeps tracking the
 /// foreground app so that enabling takes effect on the next event.
-static SERVICE: AtomicBool = AtomicBool::new(false);
+static SERVICE: AtomicBool = AtomicBool::new(true);
 
 pub(crate) fn service_enabled() -> bool { SERVICE.load(Ordering::Relaxed) }
 
-pub(crate) fn disable_service() { SERVICE.store(false, Ordering::Relaxed); }
+pub(crate) fn disable_service() {
+    SERVICE.store(false, Ordering::Relaxed);
+    crate::common::prop::setprop("persist.sys.azenithIntg.state", "0");
+}
 
 /// Turn the service on and apply immediately, so enabling works now rather than
 /// at the next foreground-app change.
 pub(crate) fn enable_service() {
     SERVICE.store(true, Ordering::Relaxed);
+    crate::common::prop::setprop("persist.sys.azenithIntg.state", "1");
     force_reapply("service enabled");
 }
 
 // Worker that runs the profiler subcommand. Exec'ing from the caller thread would
 // block (and hold the state lock) for the whole run, so it is queued instead.
 pub(crate) fn init() {
+    let enabled = crate::common::prop::getprop("persist.sys.azenithIntg.state") != "0";
+    SERVICE.store(enabled, Ordering::Relaxed);
     let (tx, rx) = mpsc::channel::<u8>();
     *TX.lock().unwrap_or_else(|e| e.into_inner()) = Some(tx);
     thread::spawn(move || {
@@ -164,13 +170,35 @@ fn apply(mode: u8, active: &Option<(String, BTreeSet<i32>)>, why: &str) {
     write_gameinfo(active);
     write_atomic(PROFILE_FILE, &format!("{mode}\n"));
     queue_profilesettings(mode);
+    broadcast_profile_change(mode, active);
+    crate::daemon::state::sync_state(why);
+}
+
+fn broadcast_profile_change(mode: u8, active: &Option<(String, BTreeSet<i32>)>) {
+    let mode_str = mode_name(mode);
+    let pkg_arg = match active {
+        Some((pkg, _)) if !pkg.is_empty() && pkg != "NULL" => format!(" --es pkg {pkg}"),
+        _ => String::new(),
+    };
+    let cmd = format!(
+        "am broadcast -a com.rianixia.settings.SHOW_NOTIFICATION -n com.rianixia.settings.overlay/com.rianixia.settings.overlay.OverlayService --es category azenith --es profile {mode_str}{pkg_arg}"
+    );
+    std::thread::spawn(move || {
+        let _ = crate::common::shell::system(comp::PROFILER, &cmd);
+    });
 }
 
 /// Force a re-apply even when the mode has not changed, so a config change made
 /// through the AIDL service takes effect now instead of at the next app switch.
 pub(crate) fn force_reapply(why: &str) {
     *CUR.lock().unwrap_or_else(|e| e.into_inner()) = 0;
-    let active = crate::daemon::state::st().active.clone();
+    let mut g = crate::daemon::state::st();
+    let s = &mut *g;
+    if s.active.is_none() {
+        s.active = crate::daemon::state::scan_foreground(&s.list).map(|(pid, pkg)| (pkg, BTreeSet::from([pid])));
+    }
+    let active = s.active.clone();
+    drop(g);
     checkup(&active, why);
 }
 

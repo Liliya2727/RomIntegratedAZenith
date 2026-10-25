@@ -113,13 +113,19 @@ pub(crate) fn apply(s: &mut St, why: &str) {
     write_state(&pkg, why);
 }
 
+pub(crate) fn sync_state(why: &str) {
+    let active = st().active.clone();
+    let pkg = active_pkg(&active);
+    write_state(&pkg, why);
+}
+
 // App from the gamelist currently on screen (oom_score_adj 0). Only called on start / gamelist change.
 //
 // Note that this is a third answer to "is this package a game?", next to the
 // first-boot scan in `daemon::apps` (which skips `zx.azenith` by name) and the
 // `gamelist.txt` the user edits: whatever ends up in the list, file ownership is
 // the only one the daemon acts on.
-fn scan_foreground(list: &BTreeSet<String>) -> Option<(i32, String)> {
+pub(crate) fn scan_foreground(list: &BTreeSet<String>) -> Option<(i32, String)> {
     let rd = fs::read_dir("/proc").ok()?;
     for e in rd.flatten() {
         let Ok(pid) = e.file_name().to_string_lossy().parse::<i32>() else { continue };

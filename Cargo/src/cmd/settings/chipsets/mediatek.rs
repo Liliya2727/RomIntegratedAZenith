@@ -114,6 +114,12 @@ fn apply_mali_power_policy(policy: &str) {
     if let Ok(mut paths) = glob::glob("/sys/devices/platform/*.mali") {
         if let Some(Ok(path)) = paths.next() {
             write_lock(policy, &format!("{}/power_policy", path.display()));
+            return;
+        }
+    }
+    if let Ok(mut paths) = glob::glob("/sys/devices/platform/soc/*.mali") {
+        if let Some(Ok(path)) = paths.next() {
+            write_lock(policy, &format!("{}/power_policy", path.display()));
         }
     }
 }

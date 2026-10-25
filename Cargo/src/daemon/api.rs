@@ -78,9 +78,16 @@ impl IAZenithService for AZenithService {
 /// Registers the service and starts rsbinder's thread pool. Called after the
 /// daemon's own libbinder_ndk pool is up: the two use separate binder fds and
 /// separate thread pools, so rsbinder needs its own or incoming transactions to
-/// this service are never dispatched. Only start_thread_pool here — the calling
-/// thread must stay free, because main() joins the libbinder_ndk pool last.
+/// this service are never dispatched.
+///
+/// init_default() must come first — both add_service and start_thread_pool route
+/// through ProcessState::self(), which aborts with "ProcessState is not
+/// initialized!" otherwise. Only start_thread_pool, not join_thread_pool: the
+/// calling thread must stay free because main() joins the libbinder_ndk pool last.
 pub(crate) fn start_binder_server() {
+    rsbinder::ProcessState::init_default()
+        .expect("Failed to initialize binder ProcessState");
+
     let binder = BnAZenithService::new_binder(AZenithService);
     match hub::add_service(SERVICE_NAME, binder.as_binder()) {
         Ok(()) => info!(comp::DAEMON, "aidl: service registered as {SERVICE_NAME}"),
