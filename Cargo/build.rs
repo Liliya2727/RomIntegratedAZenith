@@ -64,6 +64,7 @@ const DIR_KEYS: &[(&str, &str, Option<&str>)] = &[
 const FILE_KEYS: &[(&str, &str, &str)] = &[
     ("DAEMON_LOCK", "daemon.lock", "BASE_DIR"),
     ("CODES_CACHE", "codes", "BASE_DIR"),
+    ("SERVICE_ENABLED_FILE", "service_enabled", "BASE_DIR"),
     // state store — lives in API_DIR with CURRENT_PROFILE/GAMEINFO, since it
     // carries the same information (active app, applied profile) they do.
     ("STATE_FILE", "state.toml", "API_DIR"),

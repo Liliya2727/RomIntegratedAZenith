@@ -56,6 +56,9 @@ DAEMON_LOCK = ".lock"
 #   CODES_CACHE.{sdk}.{incremental} -> codes.34.1, codes.35.2, ...
 CODES_CACHE = "codes"
 
+# Last setServiceEnabled value ("1"/"0"), restored on the next start.
+SERVICE_ENABLED_FILE = "service_enabled"
+
 # ---------------------------------------------------------------------
 #  Daemon files (relative to BASE_DIR)
 # ---------------------------------------------------------------------

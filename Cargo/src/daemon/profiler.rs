@@ -16,6 +16,7 @@ use std::time::{Duration, Instant};
 
 use crate::common::log::{comp, debug, error, info, warn};
 use crate::daemon::state::{saver, screen, write_atomic};
+use crate::common::paths::SERVICE_ENABLED_FILE;
 
 // Digenerate dari Config.toml (lihat Cargo/build.rs dan crate::common::paths).
 pub(crate) use crate::common::paths::{CURRENT_PROFILE as PROFILE_FILE, GAMEINFO as GAMEINFO_FILE};
@@ -45,24 +46,47 @@ static SERVICE: AtomicBool = AtomicBool::new(true);
 
 pub(crate) fn service_enabled() -> bool { SERVICE.load(Ordering::Relaxed) }
 
+/// Persist the last setServiceEnabled value so a reboot restores it without the
+/// app having to call again. The file is the source of truth; the prop only
+/// feeds init.azenith.rc and is the fallback on a first run.
+fn persist_enabled(on: bool) {
+    let v = if on { "1" } else { "0" };
+    if !write_atomic(SERVICE_ENABLED_FILE, v) {
+        warn!(comp::PROFILER, "failed to persist service state to {SERVICE_ENABLED_FILE}");
+    }
+    if !crate::common::android_ffi::prop_set("persist.sys.azenithIntg.state", v) {
+        crate::common::prop::setprop("persist.sys.azenithIntg.state", v);
+    }
+}
+
+fn load_enabled() -> bool {
+    match fs::read_to_string(SERVICE_ENABLED_FILE) {
+        Ok(s) => s.trim() != "0",
+        Err(_) => crate::common::prop::getprop("persist.sys.azenithIntg.state") != "0",
+    }
+}
+
 pub(crate) fn disable_service() {
     SERVICE.store(false, Ordering::Relaxed);
-    crate::common::prop::setprop("persist.sys.azenithIntg.state", "0");
+    persist_enabled(false);
+    info!(comp::PROFILER, "service disabled (persisted)");
 }
 
 /// Turn the service on and apply immediately, so enabling works now rather than
 /// at the next foreground-app change.
 pub(crate) fn enable_service() {
     SERVICE.store(true, Ordering::Relaxed);
-    crate::common::prop::setprop("persist.sys.azenithIntg.state", "1");
+    persist_enabled(true);
+    info!(comp::PROFILER, "service enabled (persisted)");
     force_reapply("service enabled");
 }
 
 // Worker that runs the profiler subcommand. Exec'ing from the caller thread would
 // block (and hold the state lock) for the whole run, so it is queued instead.
 pub(crate) fn init() {
-    let enabled = crate::common::prop::getprop("persist.sys.azenithIntg.state") != "0";
+    let enabled = load_enabled();
     SERVICE.store(enabled, Ordering::Relaxed);
+    info!(comp::PROFILER, "service state restored: enabled={enabled}");
     let (tx, rx) = mpsc::channel::<u8>();
     *TX.lock().unwrap_or_else(|e| e.into_inner()) = Some(tx);
     thread::spawn(move || {
