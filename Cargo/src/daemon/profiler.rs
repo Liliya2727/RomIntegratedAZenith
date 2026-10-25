@@ -5,9 +5,10 @@
 // (IProcessObserver) -> performance, battery saver -> eco, everything else -> balanced,
 // with the 10s screen-off grace period of the C loop.
 use std::collections::BTreeSet;
+use std::ffi::c_char;
 use std::fs;
-use std::os::raw::c_char;
 use std::process::Stdio;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 use std::sync::Mutex;
 use std::thread;
@@ -31,7 +32,27 @@ const SCREEN_OFF_GRACE: Duration = Duration::from_secs(10);
 
 static CUR: Mutex<u8> = Mutex::new(0); // 0 = nothing applied yet
 static GRACE: Mutex<Option<Instant>> = Mutex::new(None); // screen-off grace period
-static TX: Mutex<Option<mpsc::Sender<u8>>> = Mutex::new(None);
+static TX: Mutex<Option<mpsc::Sender<u8>>> = Mutex::new(None); // profile worker
+
+/// Service master switch, driven by the AIDL service.
+///
+/// OFF is NOT `disabletweak`: `is_tweak_disabled()` guards *inside* each profile
+/// function, so the daemon still decides and still spawns the subcommand. This
+/// gate stops the daemon from ever deciding a profile — no apply, no subcommand,
+/// no kernel writes at all. The process stays alive and keeps tracking the
+/// foreground app so that enabling takes effect on the next event.
+static SERVICE: AtomicBool = AtomicBool::new(false);
+
+pub(crate) fn service_enabled() -> bool { SERVICE.load(Ordering::Relaxed) }
+
+pub(crate) fn disable_service() { SERVICE.store(false, Ordering::Relaxed); }
+
+/// Turn the service on and apply immediately, so enabling works now rather than
+/// at the next foreground-app change.
+pub(crate) fn enable_service() {
+    SERVICE.store(true, Ordering::Relaxed);
+    force_reapply("service enabled");
+}
 
 // Worker that runs the profiler subcommand. Exec'ing from the caller thread would
 // block (and hold the state lock) for the whole run, so it is queued instead.
@@ -155,6 +176,12 @@ pub(crate) fn force_reapply(why: &str) {
 
 // Decide the profile from the current state. Called after every foreground/died/status change.
 pub(crate) fn checkup(active: &Option<(String, BTreeSet<i32>)>, why: &str) {
+    // Service off: track nothing, apply nothing. The daemon stays alive and the
+    // observer keeps updating the active app, so enabling takes effect at once.
+    if !service_enabled() {
+        debug!(comp::PROFILER, "service off, nothing triggered ({why})");
+        return;
+    }
     let cur = *CUR.lock().unwrap_or_else(|e| e.into_inner());
     let screen_off = screen() == "off";
     let saver_on = saver() == "on";
