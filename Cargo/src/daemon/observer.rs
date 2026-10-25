@@ -1,14 +1,69 @@
 // ---------------- AMS observer (IProcessObserver) + uid -> package ----------------
-// Adapted from BinderMonitor.cpp & ProcessUtility.cpp in encore.
-use std::collections::{BTreeMap, BTreeSet};
+// Adapted from sysdaemon in azenith (observer.rs).
+use std::collections::BTreeMap;
+use std::sync::mpsc::{self, Sender};
 use std::sync::{Mutex, OnceLock};
+use std::thread;
 
-use crate::daemon::codes::codes;
 use crate::common::log::{comp, debug, error, info, warn};
+use crate::daemon::codes::codes;
 use crate::daemon::ndk::{call, n, str_alloc, P, UNKNOWN};
-use crate::daemon::state::{apply, is_app, st};
+use crate::daemon::state;
 
-const FIRST_CALL: u32 = 1; // onProcessStarted (unused)
+const FIRST_CALL: u32 = 1; // onProcessStarted
+
+pub(crate) enum Event {
+    Foreground { pid: i32, uid: i32 },
+    Started { pid: i32, uid: i32, pkg: String },
+    Died { pid: i32 },
+}
+
+static TX: OnceLock<Sender<Event>> = OnceLock::new();
+
+fn send(ev: Event) {
+    if let Some(tx) = TX.get() {
+        let _ = tx.send(ev);
+    }
+}
+
+pub(crate) fn start() {
+    let (tx, rx) = mpsc::channel::<Event>();
+    if TX.set(tx).is_err() { return; }
+    thread::spawn(move || {
+        while let Ok(ev) = rx.recv() {
+            match ev {
+                Event::Foreground { pid, uid } => {
+                    if !state::is_app(uid) { continue; }
+                    let pkg = state::pkg_of_pid(pid)
+                        .or_else(|| crate::daemon::procs::pkg_of(pid))
+                        .or_else(|| pkg_of_uid(uid));
+                    match pkg {
+                        Some(pkg) => state::set_focused(&pkg, pid, uid, "foreground"),
+                        None => debug!(comp::OBSERVER, "foreground: pid={pid} uid={uid}: package name not found"),
+                    }
+                }
+                Event::Started { pid, uid, pkg } => {
+                    if !state::is_app(uid) { continue; }
+                    let pkg = if pkg.is_empty() {
+                        match pkg_of_uid(uid) {
+                            Some(p) => p,
+                            None => continue,
+                        }
+                    } else {
+                        pkg
+                    };
+                    debug!(comp::OBSERVER, "process started: pid={pid} uid={uid} pkg={pkg}");
+                    state::add_proc(pid, &pkg, uid);
+                }
+                Event::Died { pid } => {
+                    debug!(comp::OBSERVER, "onProcessDied: pid={pid}");
+                    state::remove_proc(pid, "process died");
+                }
+            }
+        }
+        info!(comp::OBSERVER, "event worker stopped");
+    });
+}
 
 // ---------------- uid -> package via IPackageManager.getNameForUid ----------------
 static PM: OnceLock<usize> = OnceLock::new();
@@ -16,9 +71,6 @@ static UID_CACHE: Mutex<BTreeMap<i32, String>> = Mutex::new(BTreeMap::new());
 
 pub(crate) fn set_pm(b: P) { let _ = PM.set(b as usize); }
 
-/// The `package` service handle, or null when it was never acquired or has since
-/// died. Shared so the first-boot game scan (`daemon::apps`) does not open a
-/// second handle to the same service.
 pub(crate) fn pm() -> P {
     match PM.get() {
         Some(p) => *p as P,
@@ -32,12 +84,11 @@ fn pkg_of_uid(uid: i32) -> Option<String> {
     }
     let pm = *PM.get()? as P;
     let n = n();
-    // the cache lock is NOT held during the synchronous call to system_server
     let o = call(pm, codes().pm_name, |i| unsafe { (n.AParcel_writeInt32)(i, uid); })?;
     let mut buf: Vec<u8> = Vec::new();
     let r = unsafe { (n.AParcel_readString)(o, &mut buf as *mut Vec<u8> as P, str_alloc) };
     unsafe { (n.AParcel_delete)(o); }
-    if r != 0 { warn!(comp::OBSERVER, "readString getNameForUid failed, status={r}"); return None; }
+    if r != 0 { return None; }
     let end = buf.iter().position(|&b| b == 0).unwrap_or(buf.len());
     let name = String::from_utf8_lossy(&buf[..end]).into_owned();
     if name.is_empty() { return None; }
@@ -55,72 +106,35 @@ pub(crate) unsafe extern "C" fn on_observer(_b: P, code: u32, inp: P, _o: P) -> 
             (n.AParcel_readInt32)(inp, &mut pid);
             (n.AParcel_readInt32)(inp, &mut uid);
             (n.AParcel_readBool)(inp, &mut fg);
-            debug!(comp::OBSERVER, "onForegroundActivitiesChanged: pid={pid} uid={uid} fg={fg}");
-
-            let mut g = st();
-            let s = &mut *g;
-
             if fg {
-                let pkg_opt = if is_app(uid) { pkg_of_uid(uid) } else { None };
-                match pkg_opt {
-                    Some(pkg) if s.list.contains(&pkg) => {
-                        let same = matches!(&s.active, Some((p, _)) if *p == pkg);
-                        if same {
-                            if let Some((_, pids)) = &mut s.active { pids.insert(pid); }
-                        } else {
-                            info!(comp::OBSERVER, "gamelist app went to foreground: {pkg} (pid {pid})");
-                            s.active = Some((pkg, BTreeSet::from([pid])));
-                        }
-                        apply(s, "foreground");
-                    }
-                    Some(pkg) => {
-                        if let Some((prev_pkg, _)) = s.active.take() {
-                            info!(comp::OBSERVER, "leaving game {prev_pkg} -> non-game fg: {pkg}");
-                            apply(s, "non-game foreground");
-                        } else {
-                            debug!(comp::OBSERVER, "fg pkg {pkg} not in gamelist, ignored");
-                        }
-                    }
-                    None => {
-                        if let Some((prev_pkg, _)) = s.active.take() {
-                            info!(comp::OBSERVER, "leaving game {prev_pkg} -> system fg (uid {uid})");
-                            apply(s, "system foreground");
-                        }
-                    }
-                }
-            } else if !fg {
-                let active_pid_gone = match &mut s.active {
-                    Some((_, pids)) => pids.remove(&pid) && pids.is_empty(),
-                    None => false,
-                };
-                if active_pid_gone {
-                    if let Some((pkg, _)) = s.active.take() {
-                        info!(comp::OBSERVER, "active app went to background: {pkg} (pid {pid})");
-                        apply(s, "active app background");
-                    }
-                }
+                send(Event::Foreground { pid, uid });
+            }
+            return 0;
+        }
+        if code == c.proc_started || code == FIRST_CALL {
+            (n.AParcel_readInt32)(inp, &mut pid);
+            (n.AParcel_readInt32)(inp, &mut uid);
+            let mut buf: Vec<u8> = Vec::new();
+            let r = (n.AParcel_readString)(inp, &mut buf as *mut Vec<u8> as P, str_alloc);
+            let pkg = if r == 0 {
+                let end = buf.iter().position(|&b| b == 0).unwrap_or(buf.len());
+                String::from_utf8_lossy(&buf[..end]).into_owned()
+            } else {
+                String::new()
+            };
+            let pkg = crate::daemon::procs::base_pkg(&pkg).unwrap_or_default();
+            if !pkg.is_empty() || state::is_app(uid) {
+                send(Event::Started { pid, uid, pkg });
             }
             return 0;
         }
         if code == c.died {
             (n.AParcel_readInt32)(inp, &mut pid);
             (n.AParcel_readInt32)(inp, &mut uid);
-            debug!(comp::OBSERVER, "onProcessDied: pid={pid} uid={uid}");
-            let mut g = st();
-            let s = &mut *g;
-            let gone = match &mut s.active {
-                Some((_, pids)) => pids.remove(&pid) && pids.is_empty(),
-                None => false,
-            };
-            if gone {
-                if let Some((pkg, _)) = s.active.take() {
-                    info!(comp::OBSERVER, "active app died: {pkg} (pid {pid})");
-                }
-                apply(s, "active app process died");
-            }
+            send(Event::Died { pid });
             return 0;
         }
-        if code == c.fg_svc || code == FIRST_CALL { return 0; }
+        if code == c.fg_svc { return 0; }
         warn!(comp::OBSERVER, "unknown transaction from observer: code={code}");
     }
     UNKNOWN

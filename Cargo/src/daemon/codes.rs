@@ -17,12 +17,13 @@ pub(crate) struct Codes {
     pub(crate) died: u32, pub(crate) pm_name: u32,
     pub(crate) is_interactive: u32, pub(crate) is_saver: u32, pub(crate) get_zen: u32,
     pub(crate) disp_reg: u32, pub(crate) bat_prop: u32,
+    pub(crate) proc_started: u32,
 }
 static CODES: OnceLock<Codes> = OnceLock::new();
 pub(crate) fn codes() -> &'static Codes { CODES.get().unwrap() }
 pub(crate) fn set_codes(c: Codes) { let _ = CODES.set(c); }
 
-const Q: [&str; 10] = [
+const Q: [&str; 11] = [
     "android.app.IActivityManager.Stub::TRANSACTION_registerProcessObserver",
     "android.app.IProcessObserver.Stub::TRANSACTION_onForegroundActivitiesChanged",
     "android.app.IProcessObserver.Stub::TRANSACTION_onForegroundServicesChanged",
@@ -33,6 +34,7 @@ const Q: [&str; 10] = [
     "android.app.INotificationManager.Stub::TRANSACTION_getZenMode",
     "android.hardware.display.IDisplayManager.Stub::TRANSACTION_registerCallback",
     "android.os.IBatteryPropertiesRegistrar.Stub::TRANSACTION_getProperty",
+    "android.app.IProcessObserver.Stub::TRANSACTION_onProcessStarted",
 ];
 
 fn prop(k: &str) -> String {
@@ -76,12 +78,14 @@ fn parse_codes(text: &str) -> Option<Codes> {
         let (k, v) = l.rsplit_once(' ')?;
         if k == q { v.parse::<u32>().ok() } else { None }
     }).unwrap_or(0);
+    let proc_started = get(Q[10]);
     let c = Codes {
         reg: get(Q[0]), fg_act: get(Q[1]), fg_svc: get(Q[2]),
         died: get(Q[3]), pm_name: get(Q[4]),
         is_interactive: get(Q[5]), is_saver: get(Q[6]), get_zen: get(Q[7]),
         disp_reg: get(Q[8]),
         bat_prop: get(Q[9]),
+        proc_started: if proc_started != 0 { proc_started } else { 1 },
     };
     // bat_prop is optional (the battery field becomes "unknown" if it is missing)
     let req = [c.reg, c.fg_act, c.died, c.pm_name,
@@ -90,8 +94,8 @@ fn parse_codes(text: &str) -> Option<Codes> {
 }
 
 fn log_codes(c: &Codes) {
-    info!(comp::CODES, "transaction codes: registerProcessObserver={} fgActivities={} fgServices={} processDied={} getNameForUid={}",
-          c.reg, c.fg_act, c.fg_svc, c.died, c.pm_name);
+    info!(comp::CODES, "transaction codes: registerProcessObserver={} fgActivities={} fgServices={} processDied={} onProcessStarted={} getNameForUid={}",
+          c.reg, c.fg_act, c.fg_svc, c.died, c.proc_started, c.pm_name);
     info!(comp::CODES, "transaction codes: isInteractive={} isPowerSaveMode={} getZenMode={} registerDisplayCallback={} getProperty={}",
           c.is_interactive, c.is_saver, c.get_zen, c.disp_reg, c.bat_prop);
 }

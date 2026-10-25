@@ -16,8 +16,8 @@ use crate::common::paths::{API_DIR, BASE_DIR, DAEMON_LOCK, GAMELIST_DIR};
 use crate::daemon::applist::{reload_list, watch_list};
 use crate::daemon::codes::{codes, load_codes, set_codes};
 use crate::daemon::ndk::{call, class, n, service};
-use crate::daemon::observer::{on_am_died, on_observer, set_pm};
-use crate::daemon::state::adopt;
+use crate::daemon::observer::{on_am_died, on_observer, set_pm, start as start_observer};
+use crate::daemon::state::{seed, watch_processes};
 use crate::daemon::status::init_status;
 
 /// Subcommand names accepted as the first word (`sys.azenith-service preload ...`),
@@ -100,6 +100,8 @@ fn main() {
         else { warn!(comp::DAEMON, "linkToDeath failed, status={r}"); }
     }
 
+    start_observer();
+
     let obs = unsafe { (n.AIBinder_new)(class(c"android.app.IProcessObserver", on_observer), null_mut()) };
     if obs.is_null() { error!(comp::DAEMON, "failed to create observer binder"); std::process::exit(1); }
 
@@ -124,7 +126,8 @@ fn main() {
     daemon::api::start_binder_server(); // hosted AIDL service via rsbinder
     daemon::profiler::init(); // worker that applies profiles via the profilesettings subcommand
     init_status(); // register binder callbacks (screen/saver/zen) + read initial status
-    adopt("start"); // write initial state (profile 1/2/3, or 2/NULL if no game is on screen)
+    seed(); // process table + initial state (profile 1/2/3, or 2/NULL if no game is on screen)
+    watch_processes(); // periodic process verification to prevent any missed events
     info!(comp::DAEMON, "ready, waiting for callbacks from AMS");
     unsafe { (n.ABinderProcess_joinThreadPool)(); }
 }

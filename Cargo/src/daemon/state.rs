@@ -1,31 +1,40 @@
 // ---------------- profile state + state.toml (state store, like the config store in encore) ----------------
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
-use std::os::unix::fs::MetadataExt;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Mutex, MutexGuard};
+use std::thread;
+use std::time::Duration;
 
 use crate::common::log::{comp, debug, error, info};
 use crate::daemon::profiler;
+use crate::daemon::procs::{self, scan_apps};
 
 // Digenerate dari Config.toml (lihat Cargo/build.rs dan crate::common::paths).
 use crate::common::paths::STATE_FILE;
 
 pub(crate) struct St {
-    pub(crate) list: BTreeSet<String>,                    // packages in the gamelist
-    pub(crate) active: Option<(String, BTreeSet<i32>)>,   // (package, live pids) of the active app
-    last: String,                                         // last active app recorded in state.toml
+    pub(crate) list: BTreeSet<String>,                  // packages in the gamelist
+    pub(crate) active: Option<(String, BTreeSet<i32>)>, // (package, live pids) of the active app
+    pub(crate) focused: Option<(String, i32, i32)>,     // (package, pid, uid) of foreground app
+    pub(crate) procs: BTreeMap<i32, (String, i32)>,     // pid -> (package, uid) of all known app processes
+    last: String,                                       // last active app recorded in state.toml
 }
-static ST: Mutex<St> = Mutex::new(St { list: BTreeSet::new(), active: None, last: String::new() });
+
+static ST: Mutex<St> = Mutex::new(St {
+    list: BTreeSet::new(),
+    active: None,
+    focused: None,
+    procs: BTreeMap::new(),
+    last: String::new(),
+});
+
 pub(crate) fn st() -> MutexGuard<'static, St> { ST.lock().unwrap_or_else(|e| e.into_inner()) }
 
 pub(crate) fn is_app(uid: i32) -> bool { (10000..20000).contains(&(uid % 100000)) }
 
-// Only used in scan_foreground (start / gamelist change), not on the hot path.
-fn pkg_of_pid(pid: i32) -> Option<String> {
-    let raw = fs::read(format!("/proc/{pid}/cmdline")).ok()?;
-    let name = String::from_utf8_lossy(raw.split(|&b| b == 0).next()?).into_owned();
-    (!name.is_empty() && !name.contains(':') && name.contains('.')).then_some(name)
+pub(crate) fn pkg_of_pid(pid: i32) -> Option<String> {
+    st().procs.get(&pid).map(|(p, _)| p.clone())
 }
 
 pub(crate) fn write_atomic(path: &str, data: &str) -> bool {
@@ -113,36 +122,129 @@ pub(crate) fn apply(s: &mut St, why: &str) {
     write_state(&pkg, why);
 }
 
-// App from the gamelist currently on screen (oom_score_adj 0). Only called on start / gamelist change.
-//
-// Note that this is a third answer to "is this package a game?", next to the
-// first-boot scan in `daemon::apps` (which skips `zx.azenith` by name) and the
-// `gamelist.txt` the user edits: whatever ends up in the list, file ownership is
-// the only one the daemon acts on.
-pub(crate) fn scan_foreground(list: &BTreeSet<String>) -> Option<(i32, String)> {
-    let rd = fs::read_dir("/proc").ok()?;
-    for e in rd.flatten() {
-        let Ok(pid) = e.file_name().to_string_lossy().parse::<i32>() else { continue };
-        let Ok(md) = e.metadata() else { continue };
-        if !is_app(md.uid() as i32) { continue; }
-        let Some(pkg) = pkg_of_pid(pid) else { continue };
-        if !list.contains(&pkg) { continue; }
-        let top = fs::read_to_string(format!("/proc/{pid}/oom_score_adj"))
-            .map(|v| v.trim() == "0").unwrap_or(false);
-        if top { return Some((pid, pkg)); }
+pub(crate) fn add_proc(pid: i32, pkg: &str, uid: i32) {
+    let Some(pkg) = procs::base_pkg(pkg) else { return };
+    let mut g = st();
+    let s = &mut *g;
+    s.procs.insert(pid, (pkg.clone(), uid));
+    if let Some((active_pkg, pids)) = &mut s.active {
+        if *active_pkg == pkg {
+            pids.insert(pid);
+        }
     }
-    None
+}
+
+pub(crate) fn remove_proc(pid: i32, why: &str) {
+    let mut g = st();
+    let s = &mut *g;
+    s.procs.remove(&pid);
+    if let Some((_, fpid, _)) = s.focused {
+        if fpid == pid {
+            s.focused = None;
+        }
+    }
+    let gone = match &mut s.active {
+        Some((_, pids)) => pids.remove(&pid) && pids.is_empty(),
+        None => false,
+    };
+    if gone {
+        if let Some((pkg, _)) = s.active.take() {
+            info!(comp::STATE, "active app died: {pkg} (pid {pid})");
+        }
+        apply(s, why);
+    }
+}
+
+pub(crate) fn set_focused(pkg: &str, pid: i32, uid: i32, why: &str) {
+    let pkg = procs::base_pkg(pkg).unwrap_or_else(|| pkg.to_string());
+    let mut g = st();
+    let s = &mut *g;
+    s.focused = Some((pkg.clone(), pid, uid));
+    s.procs.insert(pid, (pkg.clone(), uid));
+
+    if s.list.contains(&pkg) {
+        let same = matches!(&s.active, Some((p, _)) if *p == pkg);
+        if same {
+            if let Some((_, pids)) = &mut s.active { pids.insert(pid); }
+        } else {
+            info!(comp::STATE, "gamelist app went to foreground: {pkg} (pid {pid})");
+            s.active = Some((pkg, BTreeSet::from([pid])));
+            apply(s, why);
+        }
+    } else if let Some((prev_pkg, _)) = s.active.take() {
+        info!(comp::STATE, "leaving game {prev_pkg} -> non-game fg: {pkg} (pid {pid})");
+        apply(s, why);
+    }
+}
+
+pub(crate) fn seed() {
+    let apps = scan_apps();
+    let mut g = st();
+    let s = &mut *g;
+    for a in &apps {
+        s.procs.insert(a.pid, (a.pkg.clone(), a.uid));
+    }
+    let mut running: Vec<&procs::AppProc> = apps.iter().collect();
+    running.sort_by_key(|a| (std::cmp::Reverse(a.adj), a.pid));
+    let top: Vec<&procs::AppProc> = running.iter().copied().filter(|a| a.adj == 0).collect();
+    if top.len() == 1 {
+        let a = top[0];
+        info!(comp::STATE, "initial state: [{}] is in foreground (pid {}, oom_score_adj 0)", a.pkg, a.pid);
+        s.focused = Some((a.pkg.clone(), a.pid, a.uid));
+        if s.list.contains(&a.pkg) {
+            s.active = Some((a.pkg.clone(), BTreeSet::from([a.pid])));
+        }
+    } else {
+        debug!(comp::STATE, "initial state: no unambiguous foreground app ({} candidates)", top.len());
+    }
+    info!(comp::STATE, "process table seeded with {} app processes", apps.len());
+    apply(s, "startup");
+}
+
+pub(crate) fn scan_foreground(list: &BTreeSet<String>) -> Option<(i32, String)> {
+    let apps = scan_apps();
+    apps.into_iter().find(|a| a.adj == 0 && list.contains(&a.pkg)).map(|a| (a.pid, a.pkg))
 }
 
 pub(crate) fn adopt(why: &str) {
     let mut g = st();
     let s = &mut *g;
     if s.active.is_none() {
-        s.active = scan_foreground(&s.list).map(|(pid, pkg)| (pkg, BTreeSet::from([pid])));
-        match &s.active {
-            Some((pkg, pids)) => info!(comp::STATE, "initial scan: {pkg} (pid {pids:?}) is in the foreground"),
-            None => debug!(comp::STATE, "initial scan: no gamelist app in the foreground"),
+        if let Some((ref pkg, pid, _)) = s.focused {
+            if s.list.contains(pkg) {
+                s.active = Some((pkg.clone(), BTreeSet::from([pid])));
+            }
         }
     }
     apply(s, why);
+}
+
+pub(crate) fn watch_processes() {
+    thread::spawn(|| loop {
+        thread::sleep(Duration::from_millis(1500));
+        let apps = scan_apps();
+        let top = apps.iter().find(|a| a.adj == 0);
+        if let Some(top) = top {
+            let mut g = st();
+            let s = &mut *g;
+            let current_fg = s.focused.as_ref().map(|(p, _, _)| p.clone());
+            if current_fg.as_deref() != Some(&top.pkg) {
+                drop(g);
+                set_focused(&top.pkg, top.pid, top.uid, "process poller");
+                continue;
+            }
+        }
+        // If an active game is set, verify its processes are still foreground
+        let mut g = st();
+        let s = &mut *g;
+        if let Some((ref game_pkg, ref pids)) = s.active {
+            let still_fg = apps.iter().any(|a| a.pkg == *game_pkg && a.adj <= 200 && pids.contains(&a.pid));
+            if !still_fg && !apps.iter().any(|a| a.pkg == *game_pkg && pids.contains(&a.pid)) {
+                let pkg = game_pkg.clone();
+                s.active = None;
+                info!(comp::STATE, "active game {pkg} is no longer running in foreground");
+                apply(s, "process poller: game gone");
+            }
+        }
+    });
 }

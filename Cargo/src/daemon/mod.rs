@@ -23,6 +23,7 @@ pub(crate) mod apps;
 pub(crate) mod codes;
 pub(crate) mod ndk;
 pub(crate) mod observer;
+pub(crate) mod procs;
 pub(crate) mod profiler;
 pub(crate) mod state;
 pub(crate) mod status;
