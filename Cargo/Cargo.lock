@@ -523,8 +523,6 @@ checksum = "d6f6ff9a378485b298a5286656da665ba74413d36db0979633275d2e708145d4"
 [[package]]
 name = "rsbinder"
 version = "0.12.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "18ad2f400ecd86094d28e83c9aaf830e5916c052091820717b56cac7fc1c11af"
 dependencies = [
  "async-trait",
  "libc",
@@ -747,7 +745,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "sys_azenithrs-service"
+name = "azenith-service"
 version = "1.0.0"
 dependencies = [
  "fs2",

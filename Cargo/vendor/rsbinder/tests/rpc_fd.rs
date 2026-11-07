@@ -1,0 +1,481 @@
+// Copyright 2022 Jeff Kim <hiking90@gmail.com>
+// SPDX-License-Identifier: Apache-2.0
+
+//! Opt-in FD-over-RPC (`FileDescriptorTransportMode`).
+//!
+//! * default (no opt-in) is the `FdsNotAllowed` reject (AOSP
+//!   `FileDescriptorTransportMode::NONE`).
+//! * both peers opt in over UDS ⇒ fd travels via
+//!   `SCM_RIGHTS`, valid + `O_CLOEXEC` at the receiver; works in
+//!   *both* directions (arg and reply).
+//! * on the r34 wire, one-sided opt-in falls back to `None` (reject, not
+//!   an error); on the android-13+ wire, a server refuses a client that
+//!   requests `Unix` without its own opt-in (AOSP "Rejecting connection").
+//! * a non-UDS transport (`mem`) never passes fds (rejected
+//!   by type at send; zero fds reach the peer).
+//!
+//! # v1+ AOSP-faithful path
+//!
+//! `fd_v1plus_aosp_roundtrip_both_directions` runs the v1+ FD-over-RPC path end-to-end over a
+//! real UDS: FD mode negotiated in the `RpcConnectionHeader`, `SCM_RIGHTS` carried on the
+//! AOSP no-length-prefix wire, the `[not-null|hasComm|TYPE|fdIndex]` body, and
+//! strict object-position read, at v1 (android-14/15) **and** v2 (android-16). The fd travels
+//! both ways: as a transaction *argument* (client→server, the server inbound-args gate) and in
+//! the *reply* (server→client), valid + `O_CLOEXEC` at the receiver. This is the hermetic
+//! symmetric proof; the AOSP-faithfulness gate that decides is real-libbinder interop.
+//!
+//! Separate test binary; `#![cfg(feature = "rpc")]`.
+
+#![cfg(feature = "rpc")]
+
+use std::io::{Read, Seek, Write};
+use std::os::fd::AsFd;
+use std::thread;
+
+use rsbinder::rpc::transport::MemTransport;
+use rsbinder::rpc::{
+    AddressSpace, FileDescriptorTransportMode as FdMode, RpcProxy, RpcServer, RpcSession,
+};
+use rsbinder::{
+    Binder, Interface, Parcel, ParcelFileDescriptor, Remotable, Result, SIBinder, Status,
+    StatusCode, TransactionCode, FIRST_CALL_TRANSACTION,
+};
+
+const DESC: &str = "rsbinder.test.IFdSvc";
+const TX_LEN_OF: TransactionCode = FIRST_CALL_TRANSACTION; // arg fd → its byte length
+const TX_GIVE_FD: TransactionCode = FIRST_CALL_TRANSACTION + 1; // reply carries an fd
+
+trait IFdSvc: Interface {
+    fn len_of(&self, fd: &ParcelFileDescriptor) -> Result<i32>;
+    fn give_fd(&self) -> Result<ParcelFileDescriptor>;
+}
+
+struct FdSvc;
+impl Interface for FdSvc {}
+impl IFdSvc for FdSvc {
+    fn len_of(&self, fd: &ParcelFileDescriptor) -> Result<i32> {
+        // The received fd must be a live, readable description.
+        let mut f = std::fs::File::from(fd.as_ref().try_clone().map_err(|_| StatusCode::BadFd)?);
+        f.rewind().ok();
+        let mut buf = Vec::new();
+        f.read_to_end(&mut buf).map_err(|_| StatusCode::BadFd)?;
+        Ok(buf.len() as i32)
+    }
+    fn give_fd(&self) -> Result<ParcelFileDescriptor> {
+        let mut tf = tempfile();
+        tf.write_all(b"from-server").unwrap();
+        tf.rewind().unwrap();
+        Ok(ParcelFileDescriptor::new(tf))
+    }
+}
+
+fn fd_on_transact(
+    s: &dyn IFdSvc,
+    code: TransactionCode,
+    reader: &mut Parcel,
+    reply: &mut Parcel,
+) -> Result<()> {
+    match code {
+        TX_LEN_OF => {
+            let pfd: ParcelFileDescriptor = reader.read()?;
+            match s.len_of(&pfd) {
+                Ok(v) => {
+                    reply.write(&Status::from(StatusCode::Ok))?;
+                    reply.write(&v)
+                }
+                Err(e) => reply.write(&Status::from(e)),
+            }
+        }
+        TX_GIVE_FD => match s.give_fd() {
+            Ok(pfd) => {
+                reply.write(&Status::from(StatusCode::Ok))?;
+                reply.write(&pfd)
+            }
+            Err(e) => reply.write(&Status::from(e)),
+        },
+        _ => Err(StatusCode::UnknownTransaction),
+    }
+}
+
+struct BnFd(Box<dyn IFdSvc + Send + Sync>);
+impl Remotable for BnFd {
+    fn descriptor() -> &'static str {
+        DESC
+    }
+    fn on_transact(
+        &self,
+        code: TransactionCode,
+        reader: &mut Parcel,
+        reply: &mut Parcel,
+    ) -> Result<()> {
+        fd_on_transact(&*self.0, code, reader, reply)
+    }
+    fn on_dump(&self, _w: &mut dyn std::io::Write, _a: &[String]) -> Result<()> {
+        Ok(())
+    }
+}
+
+/// Unlinked temp file named by a counter (macOS `SystemTime` is µs); collisions fail `create_new`.
+fn tempfile() -> std::fs::File {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+    let mut p = std::env::temp_dir();
+    p.push(format!(
+        "rsb_fd_{}_{}.tmp",
+        std::process::id(),
+        NEXT.fetch_add(1, Ordering::Relaxed)
+    ));
+    let f = std::fs::OpenOptions::new()
+        .create_new(true)
+        .read(true)
+        .write(true)
+        .open(&p)
+        .expect("tempfile");
+    let _ = std::fs::remove_file(&p); // unlinked; fd keeps it alive
+    f
+}
+
+fn rp_of(b: &SIBinder) -> &RpcProxy {
+    (**b).as_any().downcast_ref::<RpcProxy>().expect("RpcProxy")
+}
+
+fn call_len_of(root: &SIBinder, pfd: &ParcelFileDescriptor) -> Result<i32> {
+    let rp = rp_of(root);
+    let mut d = rp.build_request(DESC)?;
+    d.write(pfd)?;
+    let mut r = rp
+        .transact(TX_LEN_OF, &d, 0)?
+        .ok_or(StatusCode::UnexpectedNull)?;
+    let st: Status = r.read()?;
+    if !st.is_ok() {
+        return Err(StatusCode::from(st));
+    }
+    r.read::<i32>()
+}
+
+fn tmp_sock(tag: &str) -> std::path::PathBuf {
+    let mut p = std::env::temp_dir();
+    p.push(format!(
+        "rsb_rpcfd_{}_{}_{}.sock",
+        tag,
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    p
+}
+fn wait_sock(p: &std::path::Path) {
+    for _ in 0..400 {
+        if p.exists() {
+            return;
+        }
+        thread::sleep(std::time::Duration::from_millis(5));
+    }
+    panic!("socket never appeared");
+}
+
+/// Both peers opt in over UDS ⇒ fd passes both ways, valid + O_CLOEXEC at the receiver.
+#[test]
+fn fd_roundtrip_when_both_opt_in_over_uds() {
+    let path = tmp_sock("ok");
+    let server = RpcServer::setup_unix_server(&path).expect("bind");
+    server.set_supported_fd_modes(&[FdMode::Unix]);
+    server
+        .set_root(Interface::as_binder(&Binder::new(BnFd(Box::new(FdSvc)))))
+        .expect("set_root");
+    let bg = server.run_background();
+    wait_sock(&path);
+
+    let client = RpcSession::setup_unix_client(&path).expect("connect");
+    assert_eq!(
+        client.negotiate_fd_transport(FdMode::Unix).unwrap(),
+        FdMode::Unix,
+        "both opted in → Unix"
+    );
+    let root = client.get_root().expect("get_root");
+
+    // arg direction: client passes an fd; server reads its bytes.
+    let mut tf = tempfile();
+    tf.write_all(b"hello-fd-payload").unwrap();
+    tf.rewind().unwrap();
+    let pfd = ParcelFileDescriptor::new(tf);
+    assert_eq!(call_len_of(&root, &pfd).unwrap(), 16);
+
+    // reply direction: server hands back an fd; client reads it + checks it is O_CLOEXEC.
+    let rp = rp_of(&root);
+    let d = rp.build_request(DESC).unwrap();
+    let mut r = rp.transact(TX_GIVE_FD, &d, 0).unwrap().unwrap();
+    let st: Status = r.read().unwrap();
+    assert!(st.is_ok());
+    let got: ParcelFileDescriptor = r.read().unwrap();
+    {
+        let mut f = std::fs::File::from(got.as_ref().try_clone().unwrap());
+        let mut s = String::new();
+        f.read_to_string(&mut s).unwrap();
+        assert_eq!(s, "from-server");
+    }
+    // O_CLOEXEC must be set on the received fd.
+    let flags = rustix::io::fcntl_getfd(got.as_ref().as_fd()).unwrap();
+    assert!(
+        flags.contains(rustix::io::FdFlags::CLOEXEC),
+        "received fd must be O_CLOEXEC"
+    );
+
+    drop(root);
+    drop(client);
+    server.stop_accepting();
+    let _ = bg.join();
+    let _ = std::fs::remove_file(&path);
+}
+
+/// No or one-sided opt-in ⇒ fd write is the `FdsNotAllowed` reject, never corruption or a hang.
+#[test]
+fn fd_rejected_without_mutual_opt_in() {
+    // (a) server does NOT support Unix; client requests it.
+    let path = tmp_sock("noopt");
+    let server = RpcServer::setup_unix_server(&path).expect("bind");
+    // intentionally NOT set_supported_fd_modes
+    server
+        .set_root(Interface::as_binder(&Binder::new(BnFd(Box::new(FdSvc)))))
+        .expect("set_root");
+    let bg = server.run_background();
+    wait_sock(&path);
+
+    let client = RpcSession::setup_unix_client(&path).expect("connect");
+    assert_eq!(
+        client.negotiate_fd_transport(FdMode::Unix).unwrap(),
+        FdMode::None,
+        "server didn't opt in → fallback to None (not an error)"
+    );
+    let root = client.get_root().unwrap();
+    let mut tf = tempfile();
+    tf.write_all(b"x").unwrap();
+    let pfd = ParcelFileDescriptor::new(tf);
+    assert_eq!(
+        call_len_of(&root, &pfd).unwrap_err(),
+        StatusCode::FdsNotAllowed,
+        "AC-7.1/7.3: FD in None mode is the 2-2 reject"
+    );
+
+    drop(root);
+    drop(client);
+    server.stop_accepting();
+    let _ = bg.join();
+    let _ = std::fs::remove_file(&path);
+
+    // (b) server supports Unix; the client never negotiates.
+    let path = tmp_sock("noopt_b");
+    let server = RpcServer::setup_unix_server(&path).expect("bind");
+    server.set_supported_fd_modes(&[FdMode::Unix]);
+    server
+        .set_root(Interface::as_binder(&Binder::new(BnFd(Box::new(FdSvc)))))
+        .expect("set_root");
+    let bg = server.run_background();
+    wait_sock(&path);
+
+    let client = RpcSession::setup_unix_client(&path).expect("connect");
+    let root = client.get_root().unwrap();
+    let mut tf = tempfile();
+    tf.write_all(b"x").unwrap();
+    let pfd = ParcelFileDescriptor::new(tf);
+    assert_eq!(
+        call_len_of(&root, &pfd).unwrap_err(),
+        StatusCode::FdsNotAllowed,
+        "client didn't opt in → None mode, the same reject"
+    );
+
+    drop(root);
+    drop(client);
+    server.stop_accepting();
+    let _ = bg.join();
+    let _ = std::fs::remove_file(&path);
+}
+
+/// android-13+: a server refuses a new session whose fd mode it does not support (AOSP).
+#[test]
+fn a13_server_refuses_a_client_requesting_an_unsupported_fd_mode() {
+    use rsbinder::rpc::transport::UnixTransport;
+    use rsbinder::rpc::RpcClientConfig;
+
+    // (a) socketpair: the accept entry without `server_fd_unix`.
+    let (a, b) = UnixTransport::pair().expect("socketpair");
+    let accept = thread::spawn(move || -> Result<()> {
+        let server = RpcSession::accept_android13plus_fd(Box::new(a), 1, false)?;
+        server.set_root(Interface::as_binder(&Binder::new(BnFd(Box::new(FdSvc)))))?;
+        let _ = server.serve_blocking();
+        Ok(())
+    });
+    // The handshake response precedes the refusal, so the connect itself succeeds.
+    let client = RpcSession::connect_android13plus_fd(Box::new(b), 1, FdMode::Unix)
+        .expect("handshake completes before the refusal");
+    assert_eq!(
+        client.get_root().err(),
+        Some(StatusCode::DeadObject),
+        "the server closed the connection it refused"
+    );
+    assert!(accept.join().expect("accept thread").is_err());
+
+    // (b) `RpcServer` without `set_supported_fd_modes`; a client asking for no fd mode is served.
+    let path = tmp_sock("a13noopt");
+    let server = RpcServer::setup_unix_server(&path).expect("bind");
+    server.set_android13plus(1);
+    server
+        .set_root(Interface::as_binder(&Binder::new(BnFd(Box::new(FdSvc)))))
+        .expect("set_root");
+    let bg = server.run_background();
+    wait_sock(&path);
+
+    let client = RpcSession::setup_client_android13plus_with_config(
+        RpcClientConfig::unix(&path, 1).fd_mode(FdMode::Unix),
+    )
+    .expect("handshake completes before the refusal");
+    assert_eq!(client.get_root().err(), Some(StatusCode::DeadObject));
+    let plain = RpcSession::setup_client_android13plus_with_config(RpcClientConfig::unix(&path, 1))
+        .expect("connect without an fd mode");
+    plain.get_root().expect("no fd mode requested, so served");
+
+    drop(plain);
+    drop(client);
+    server.stop_accepting();
+    let _ = bg.join();
+    let _ = std::fs::remove_file(&path);
+}
+
+/// A non-UDS transport (`mem`) rejects fds by type at the transport; zero fds reach the peer.
+#[test]
+fn fd_rejected_on_non_uds_transport() {
+    let (a, b) = MemTransport::pair();
+    let server = RpcSession::new(Box::new(a), AddressSpace::Acceptor).expect("RpcSession::new");
+    server.set_supported_fd_modes(&[FdMode::Unix]);
+    server
+        .set_root(Interface::as_binder(&Binder::new(BnFd(Box::new(FdSvc)))))
+        .expect("set_root");
+    let srv = server.clone();
+    let h = thread::spawn(move || {
+        let _ = srv.serve_blocking();
+    });
+
+    let client = RpcSession::new(Box::new(b), AddressSpace::Initiator).expect("RpcSession::new");
+    // Negotiation succeeds, but the mem transport's fd methods reject, so the call fails.
+    let _ = client.negotiate_fd_transport(FdMode::Unix);
+    let root = client.get_root().unwrap();
+    let mut tf = tempfile();
+    tf.write_all(b"y").unwrap();
+    let pfd = ParcelFileDescriptor::new(tf);
+    let err = call_len_of(&root, &pfd).expect_err("mem must not pass fds");
+    assert!(
+        matches!(
+            err,
+            StatusCode::RpcError | StatusCode::BadType | StatusCode::DeadObject
+        ),
+        "non-UDS fd attempt must fail cleanly, got {err:?}"
+    );
+
+    drop(root);
+    drop(client);
+    let _ = h.join();
+}
+
+/// v1 and v2 AOSP-framed fd round-trip, arg and reply; see module doc "v1+ AOSP-faithful path".
+#[test]
+fn fd_v1plus_aosp_roundtrip_both_directions() {
+    for ver in [1u32, 2u32] {
+        let path = tmp_sock(&format!("a13fd_v{ver}"));
+        let server = RpcServer::setup_unix_server(&path).expect("bind");
+        server.set_android13plus(ver); // versioned AOSP wire
+        server.set_supported_fd_modes(&[FdMode::Unix]); // opt in
+        server
+            .set_root(Interface::as_binder(&Binder::new(BnFd(Box::new(FdSvc)))))
+            .expect("set_root");
+        let bg = server.run_background();
+        wait_sock(&path);
+
+        // FD mode rides the connection header, not the R34 GET_FD_MODE special-transact.
+        let client = RpcSession::setup_unix_client_android13plus_fd(&path, ver, FdMode::Unix)
+            .expect("android-13+ fd connect");
+        assert_eq!(
+            client.wire_protocol_version(),
+            Some(ver),
+            "negotiated v{ver}"
+        );
+        let root = client.get_root().expect("get_root");
+
+        // arg direction: client passes an fd; server reads it (inbound-args gate at v1+).
+        let mut tf = tempfile();
+        tf.write_all(b"hello-fd-payload-v").unwrap();
+        tf.write_all(ver.to_string().as_bytes()).unwrap();
+        tf.rewind().unwrap();
+        let pfd = ParcelFileDescriptor::new(tf);
+        assert_eq!(
+            call_len_of(&root, &pfd).unwrap(),
+            "hello-fd-payload-v".len() as i32 + 1,
+            "v{ver}: server read the arg fd over the AOSP wire"
+        );
+
+        // reply direction: server hands back an fd; client reads it + checks O_CLOEXEC.
+        let rp = rp_of(&root);
+        let d = rp.build_request(DESC).unwrap();
+        let mut r = rp.transact(TX_GIVE_FD, &d, 0).unwrap().unwrap();
+        let st: Status = r.read().unwrap();
+        assert!(st.is_ok(), "v{ver}: give_fd status");
+        let got: ParcelFileDescriptor = r.read().unwrap();
+        {
+            let mut f = std::fs::File::from(got.as_ref().try_clone().unwrap());
+            let mut s = String::new();
+            f.read_to_string(&mut s).unwrap();
+            assert_eq!(s, "from-server", "v{ver}: reply fd content");
+        }
+        let flags = rustix::io::fcntl_getfd(got.as_ref().as_fd()).unwrap();
+        assert!(
+            flags.contains(rustix::io::FdFlags::CLOEXEC),
+            "v{ver}: received fd must be O_CLOEXEC"
+        );
+
+        drop(root);
+        drop(client);
+        server.stop_accepting();
+        let _ = bg.join();
+        let _ = std::fs::remove_file(&path);
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "android"))]
+#[test]
+fn fd_v1_abstract_unix_roundtrip_arg() {
+    use rsbinder::rpc::RpcClientConfig;
+
+    let name = format!("rsb_rpcfd_abs_{}", std::process::id()).into_bytes();
+    let server = RpcServer::setup_unix_server_abstract(&name).expect("bind abstract fd");
+    server.set_android13plus(1);
+    server.set_max_threads(2);
+    server.set_supported_fd_modes(&[FdMode::Unix]);
+    server
+        .set_root(Interface::as_binder(&Binder::new(BnFd(Box::new(FdSvc)))))
+        .expect("set_root");
+    let bg = server.run_background();
+
+    let client = RpcSession::setup_client_android13plus_with_config(
+        RpcClientConfig::unix_abstract(&name, 1)
+            .fd_mode(FdMode::Unix)
+            .outgoing_connections(2),
+    )
+    .expect("abstract fd connect");
+    assert_eq!(client.negotiated_max_threads(), 2);
+    let root = client.get_root().expect("get_root");
+
+    let mut tf = tempfile();
+    tf.write_all(b"abstract-fd").unwrap();
+    tf.rewind().unwrap();
+    let pfd = ParcelFileDescriptor::new(tf);
+    assert_eq!(
+        call_len_of(&root, &pfd).unwrap(),
+        "abstract-fd".len() as i32
+    );
+
+    drop(root);
+    drop(client);
+    server.stop_accepting();
+    let _ = bg.join();
+}

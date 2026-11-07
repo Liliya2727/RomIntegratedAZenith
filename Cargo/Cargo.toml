@@ -1,5 +1,5 @@
 [package]
-name = "sys_azenithrs-service"
+name = "azenith-service"
 version = "1.0.0"
 edition = "2024"
 
@@ -18,3 +18,9 @@ lto = true
 codegen-units = 1
 panic = 'abort'
 strip = true
+
+[patch.crates-io]
+# rsbinder 0.12.0 calls libc::process_vm_readv, which Android's bionic only
+# exports from API 23 (missing at cargo-ndk's default API 21). Issue the raw
+# syscall instead (Linux >= 3.2) so the link works at any API level.
+rsbinder = { path = "vendor/rsbinder" }

@@ -1,0 +1,601 @@
+// Copyright 2026 Jeff Kim <hiking90@gmail.com>
+// SPDX-License-Identifier: Apache-2.0
+
+//! Plan 2-21 D-7 — what every in-tree transport's `shutdown` does, pinned
+//! per backend **and per platform**.
+//!
+//! The contract on `RpcTransport::shutdown` says that what happens to
+//! bytes already received is platform- and backend-dependent and must not
+//! be assumed. This suite is what keeps that sentence true rather than
+//! merely written: it asserts the measured behaviour, so the next
+//! refactor that quietly relies on a queued frame vanishing (or
+//! surviving) fails here, on whichever platform it would have been wrong.
+//!
+//! | backend | queued frame, then local shutdown | blocked reader | peer after our shutdown | our send after our shutdown | 2nd shutdown |
+//! |---|---|---|---|---|---|
+//! | unix, unix fd-mode, tls (over unix) | **macOS:** end of stream (queue dropped) · **Linux:** the frame, then end of stream | end of stream | reads end of stream; its first send **fails at once on Linux (`EPIPE`), is accepted on macOS** | fails at once, `EndOfStream` (tls: refused before the lock) | `Ok` |
+//! | tcp_debug | as above | end of stream | reads end of stream; its first send is **accepted on both** — TCP reports the reset on a later write | fails at once, `EndOfStream` | `Ok` |
+//! | mem | the frame, then end of stream (models Linux unix) | end of stream (≤ one 20 ms tick) | reads end of stream; its sends fail at once | fails at once, `EndOfStream` | `Ok` |
+//!
+//! `unix` and `mem` are also run through `send_raw`/`recv_raw`, the byte
+//! stream the android-13+ profile reads, with the same rows: a raw read's
+//! `Ok(0)` is the end of stream. That pins `mem`'s raw path to the Linux
+//! socket it models.
+//!
+//! "Queued" means in our receive queue before the shutdown, and for
+//! `tcp_debug` the scenario waits until it is: XNU's loopback delivers a
+//! segment after the sender's `send` returns, and one that lands after our
+//! shutdown draws a RST, so the peer's first send fails (`EPIPE`) where the
+//! table says it is accepted.
+//!
+//! `vsock` is not here: it needs a VM peer (its own tests are `#[ignore]`),
+//! and its behaviour is inferred from `vsock(7)`, not measured.
+//!
+//! `peer_closed` is pinned the same way: `Some(false)` while the peer is open
+//! even with a frame unread, then `Some(true)` once it closes — on Linux and
+//! macOS for every socket backend, elsewhere for Unix-domain ones (tls here
+//! runs over a unix pair) and `None` for `tcp_debug`; `mem` keeps the trait's
+//! `None`.
+//!
+//! An fd-mode reader parked in `recvmsg` holds the reader lock until the
+//! socket wakes it, so a `shutdown` that takes that lock first deadlocks
+//! against it. Every `shutdown` here runs under a deadline, so such a bug
+//! fails the test instead of hanging the runner. Reads get the same
+//! protection: `armed` sets a 5 s read deadline on both ends of every pair,
+//! because the reads here expect an end of stream that a regressed
+//! `shutdown` would never produce (the peer is still alive) and libtest has
+//! no per-test timeout. It is longer than every `recv_timeout` bound, so the
+//! assertion is still what reports the failure.
+//!
+//! Scenario E (our own send after our own shutdown) must fail as the end of
+//! stream. The trait says a shutdown makes this end's later sends fail; the
+//! session's send rule retires the slot only on `EndOfStream`/`Io`
+//! (session.rs module doc "Failed sends"), and reads `Ok` as "the frame
+//! went out". A backend that let a send
+//! through after its own shutdown would report `Ok` for a frame the peer
+//! never reads. A socket cut in both directions refuses at once with
+//! `EPIPE`, `mem` by design, and `tls` gates the send itself: its cut is
+//! deferred behind the close signal, and a frame accepted in between would
+//! be one the peer discards after reading the alert (RFC 8446 §6.1).
+//!
+//! Separate test binary, `#![cfg(feature = "rpc")]`.
+
+#![cfg(feature = "rpc")]
+
+use std::sync::mpsc::RecvTimeoutError;
+use std::sync::Arc;
+use std::time::Duration;
+
+use rsbinder::rpc::transport::{MemTransport, UnixTransport};
+use rsbinder::rpc::{RpcError, RpcTransport};
+
+type Shared = Arc<dyn RpcTransport>;
+
+/// What a reader gets after a local shutdown when a frame was already queued locally.
+#[derive(Clone, Copy)]
+enum Queued {
+    /// Delivered first, then the end of stream (Linux; `mem`).
+    Delivered,
+    /// Gone: the very next read is the end of stream (macOS).
+    Dropped,
+}
+
+/// The socket backends follow the kernel; `mem` follows Linux by design.
+fn socket_expectation() -> Queued {
+    if cfg!(target_os = "macos") {
+        Queued::Dropped
+    } else {
+        Queued::Delivered
+    }
+}
+
+/// The peer's first send after our shutdown, as measured per backend and platform.
+#[derive(Clone, Copy)]
+enum PeerSend {
+    /// Refused at once (`EPIPE`): Linux `AF_UNIX`, and `mem` by design.
+    FailsAtOnce,
+    /// Accepted (discarded, or reset on a later write): macOS `AF_UNIX`, and TCP everywhere.
+    Accepted,
+}
+
+fn unix_peer_send() -> PeerSend {
+    if cfg!(target_os = "macos") {
+        PeerSend::Accepted
+    } else {
+        PeerSend::FailsAtOnce
+    }
+}
+
+/// `shutdown` on its own thread under a 2 s deadline, so a blocked shutdown fails, not hangs.
+fn shutdown_within(name: &str, t: &Shared) {
+    let (tx, rx) = std::sync::mpsc::sync_channel::<Result<(), RpcError>>(1);
+    let t = Arc::clone(t);
+    let h = std::thread::spawn(move || {
+        let _ = tx.send(t.shutdown());
+    });
+    match rx.recv_timeout(Duration::from_secs(2)) {
+        Ok(Ok(())) => {}
+        Ok(Err(e)) => panic!("{name}: shutdown failed: {e}"),
+        Err(RecvTimeoutError::Timeout) => panic!("{name}: shutdown blocked"),
+        Err(RecvTimeoutError::Disconnected) => panic!("{name}: shutdown thread died"),
+    }
+    h.join().expect("shutdown thread");
+}
+
+/// How a scenario moves bytes: length-framed, framed with `SCM_RIGHTS`, or the raw byte stream.
+#[derive(Clone, Copy, PartialEq)]
+enum Mode {
+    Frame,
+    FdFrame,
+    Raw,
+}
+
+impl Mode {
+    /// The peer's side of a scenario never passes fds.
+    fn peer(self) -> Mode {
+        if self == Mode::FdFrame {
+            Mode::Frame
+        } else {
+            self
+        }
+    }
+}
+
+fn send(t: &dyn RpcTransport, mode: Mode, buf: &[u8]) -> Result<(), RpcError> {
+    match mode {
+        Mode::Raw => t.send_raw(buf),
+        Mode::Frame | Mode::FdFrame => t.send_frame(buf),
+    }
+}
+
+/// One frame, or one raw read; a raw `Ok(0)` is reported as the `EndOfStream` a frame read gives.
+fn recv(t: &dyn RpcTransport, mode: Mode) -> Result<Vec<u8>, RpcError> {
+    match mode {
+        Mode::Frame => t.recv_frame(),
+        Mode::FdFrame => t.recv_frame_with_fds().map(|(frame, _fds)| frame),
+        Mode::Raw => {
+            let mut buf = [0u8; 64];
+            match t.recv_raw(&mut buf)? {
+                0 => Err(RpcError::EndOfStream),
+                n => Ok(buf[..n].to_vec()),
+            }
+        }
+    }
+}
+
+/// Scenario A (queued frame), C (idempotence) and D (the peer's view).
+fn queued_then_shutdown(
+    name: &str,
+    local: &Shared,
+    peer: &Shared,
+    mode: Mode,
+    queued: Queued,
+    peer_send: PeerSend,
+) {
+    queued_then_shutdown_after(name, local, peer, mode, queued, peer_send, || {});
+}
+
+/// [`queued_then_shutdown`], with `arrived` returning once the frame is in our receive queue.
+fn queued_then_shutdown_after(
+    name: &str,
+    local: &Shared,
+    peer: &Shared,
+    mode: Mode,
+    queued: Queued,
+    peer_send: PeerSend,
+    arrived: impl FnOnce(),
+) {
+    send(&**peer, mode.peer(), b"queued").expect("peer sends into our queue");
+    arrived();
+    shutdown_within(name, local);
+    if let Queued::Delivered = queued {
+        assert_eq!(
+            recv(&**local, mode).expect("the queued frame is still delivered"),
+            b"queued",
+            "{name}: a frame queued before shutdown is delivered on this platform"
+        );
+    }
+    let end = recv(&**local, mode);
+    assert!(
+        matches!(end, Err(RpcError::EndOfStream)),
+        "{name}: after shutdown (and any queued frame) the read is the end of stream, got {end:?}"
+    );
+    // A second shutdown is Ok (idempotent).
+    shutdown_within(name, local);
+    // The peer: our shutdown is its end of stream.
+    let peer_end = recv(&**peer, mode.peer());
+    assert!(
+        matches!(peer_end, Err(RpcError::EndOfStream)),
+        "{name}: the peer reads our shutdown as its end of stream, got {peer_end:?}"
+    );
+    // Measured per backend and platform: a change here changes the module-doc table too.
+    let sent = send(&**peer, mode.peer(), b"x");
+    match peer_send {
+        PeerSend::FailsAtOnce => assert!(
+            sent.is_err(),
+            "{name}: the peer's first send after our shutdown fails at once here, got {sent:?}"
+        ),
+        PeerSend::Accepted => assert!(
+            sent.is_ok(),
+            "{name}: the peer's first send after our shutdown is accepted here, got {sent:?}"
+        ),
+    }
+}
+
+/// Scenario B: a local shutdown wakes a parked reader with the end of stream, within a bound.
+fn blocked_reader_is_woken(name: &str, local: &Shared, mode: Mode) {
+    let (tx, rx) = std::sync::mpsc::sync_channel::<Result<Vec<u8>, RpcError>>(1);
+    let (started_tx, started_rx) = std::sync::mpsc::sync_channel::<()>(1);
+    let reader = {
+        let local = Arc::clone(local);
+        std::thread::spawn(move || {
+            let _ = started_tx.send(());
+            let _ = tx.send(recv(&*local, mode));
+        })
+    };
+    started_rx.recv().expect("the reader thread started");
+    std::thread::sleep(Duration::from_millis(50));
+    // Still parked, or the end of stream below is a plain read and no wake-up is tested.
+    assert!(
+        matches!(rx.try_recv(), Err(std::sync::mpsc::TryRecvError::Empty)),
+        "{name}: the reader must still be parked when we shut down"
+    );
+    shutdown_within(name, local);
+    match rx.recv_timeout(Duration::from_secs(2)) {
+        Ok(Err(RpcError::EndOfStream)) => {}
+        Ok(other) => panic!("{name}: the woken reader must see the end of stream, got {other:?}"),
+        Err(RecvTimeoutError::Timeout) => panic!("{name}: shutdown did not wake the parked reader"),
+        Err(RecvTimeoutError::Disconnected) => panic!("{name}: the reader thread died"),
+    }
+    reader.join().expect("reader thread");
+}
+
+/// Scenario E: our own send after our own shutdown fails as `EndOfStream` (see module doc).
+fn our_send_after_our_shutdown_fails(name: &str, local: &Shared, mode: Mode) {
+    shutdown_within(name, local);
+    let sent = send(&**local, mode, b"after");
+    assert!(
+        matches!(sent, Err(RpcError::EndOfStream)),
+        "{name}: our own send after our own shutdown fails as the end of stream, got {sent:?}"
+    );
+}
+
+/// Arms the suite's 5 s read deadline on both ends of the pair (see module doc).
+fn armed(pair: (Shared, Shared)) -> (Shared, Shared) {
+    for t in [&pair.0, &pair.1] {
+        t.set_read_timeout(Some(Duration::from_secs(5)))
+            .expect("arm the suite's read deadline");
+    }
+    pair
+}
+
+/// `peer_closed` once the peer is gone: TCP off Linux/Android/Apple is `None`, not measured there.
+fn closed_expectation(unix_domain: bool) -> Option<bool> {
+    if cfg!(any(
+        target_os = "linux",
+        target_os = "android",
+        target_vendor = "apple"
+    )) || unix_domain
+    {
+        Some(true)
+    } else {
+        None
+    }
+}
+
+/// `peer_closed` is `false` while the peer is open, unread bytes or not, and then `closed`.
+fn peer_closed_tracks_the_peer(name: &str, local: &Shared, peer: Shared, closed: Option<bool>) {
+    let open = closed.map(|_| false);
+    assert_eq!(local.peer_closed(), open, "{name}: peer open");
+    peer.send_frame(b"unread").expect("peer send");
+    // A FIN on loopback lands asynchronously on some stacks; give the flags time to settle.
+    std::thread::sleep(Duration::from_millis(20));
+    assert_eq!(
+        local.peer_closed(),
+        open,
+        "{name}: an unread frame is not a close"
+    );
+    drop(peer);
+    let mut got = local.peer_closed();
+    for _ in 0..200 {
+        if got == closed {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+        got = local.peer_closed();
+    }
+    assert_eq!(
+        got, closed,
+        "{name}: peer closed, with a frame still unread"
+    );
+}
+
+fn unix_pair() -> (Shared, Shared) {
+    let (a, b) = UnixTransport::pair().expect("socketpair");
+    armed((Arc::new(a), Arc::new(b)))
+}
+
+fn mem_pair() -> (Shared, Shared) {
+    let (a, b) = MemTransport::pair();
+    armed((Arc::new(a), Arc::new(b)))
+}
+
+#[test]
+fn unix_queued_frame_then_shutdown() {
+    let (local, peer) = unix_pair();
+    queued_then_shutdown(
+        "unix",
+        &local,
+        &peer,
+        Mode::Frame,
+        socket_expectation(),
+        unix_peer_send(),
+    );
+}
+
+#[test]
+fn unix_blocked_reader_is_woken() {
+    let (local, _peer) = unix_pair();
+    blocked_reader_is_woken("unix", &local, Mode::Frame);
+}
+
+#[test]
+fn unix_fd_mode_queued_frame_then_shutdown() {
+    let (local, peer) = unix_pair();
+    queued_then_shutdown(
+        "unix fd-mode",
+        &local,
+        &peer,
+        Mode::FdFrame,
+        socket_expectation(),
+        unix_peer_send(),
+    );
+}
+
+#[test]
+fn unix_fd_mode_blocked_reader_is_woken() {
+    let (local, _peer) = unix_pair();
+    blocked_reader_is_woken("unix fd-mode", &local, Mode::FdFrame);
+}
+
+#[test]
+fn unix_our_send_after_our_shutdown_fails() {
+    let (local, _peer) = unix_pair();
+    our_send_after_our_shutdown_fails("unix", &local, Mode::Frame);
+}
+
+#[test]
+fn unix_raw_queued_bytes_then_shutdown() {
+    let (local, peer) = unix_pair();
+    queued_then_shutdown(
+        "unix raw",
+        &local,
+        &peer,
+        Mode::Raw,
+        socket_expectation(),
+        unix_peer_send(),
+    );
+}
+
+#[test]
+fn unix_raw_blocked_reader_is_woken() {
+    let (local, _peer) = unix_pair();
+    blocked_reader_is_woken("unix raw", &local, Mode::Raw);
+}
+
+#[test]
+fn unix_raw_our_send_after_our_shutdown_fails() {
+    let (local, _peer) = unix_pair();
+    our_send_after_our_shutdown_fails("unix raw", &local, Mode::Raw);
+}
+
+#[test]
+fn unix_peer_closed_tracks_the_peer() {
+    let (local, peer) = unix_pair();
+    peer_closed_tracks_the_peer("unix", &local, peer, closed_expectation(true));
+}
+
+/// `mem` keeps the trait default: it cannot tell, so it never claims the peer is open.
+#[test]
+fn mem_peer_closed_is_unknown() {
+    let (local, peer) = mem_pair();
+    peer_closed_tracks_the_peer("mem", &local, peer, None);
+}
+
+#[test]
+fn mem_queued_frame_then_shutdown() {
+    let (local, peer) = mem_pair();
+    queued_then_shutdown(
+        "mem",
+        &local,
+        &peer,
+        Mode::Frame,
+        Queued::Delivered,
+        PeerSend::FailsAtOnce,
+    );
+}
+
+#[test]
+fn mem_blocked_reader_is_woken() {
+    let (local, _peer) = mem_pair();
+    blocked_reader_is_woken("mem", &local, Mode::Frame);
+}
+
+#[test]
+fn mem_our_send_after_our_shutdown_fails() {
+    let (local, _peer) = mem_pair();
+    our_send_after_our_shutdown_fails("mem", &local, Mode::Frame);
+}
+
+#[test]
+fn mem_raw_queued_bytes_then_shutdown() {
+    let (local, peer) = mem_pair();
+    queued_then_shutdown(
+        "mem raw",
+        &local,
+        &peer,
+        Mode::Raw,
+        Queued::Delivered,
+        PeerSend::FailsAtOnce,
+    );
+}
+
+#[test]
+fn mem_raw_blocked_reader_is_woken() {
+    let (local, _peer) = mem_pair();
+    blocked_reader_is_woken("mem raw", &local, Mode::Raw);
+}
+
+#[test]
+fn mem_raw_our_send_after_our_shutdown_fails() {
+    let (local, _peer) = mem_pair();
+    our_send_after_our_shutdown_fails("mem raw", &local, Mode::Raw);
+}
+
+#[cfg(feature = "rpc-tcp-debug")]
+mod tcp {
+    use super::*;
+    use rsbinder::rpc::transport::TcpDebugTransport;
+    use std::net::TcpStream;
+
+    fn tcp_pair() -> (Shared, Shared) {
+        let (client, server) = TcpDebugTransport::pair_loopback().expect("loopback pair");
+        armed((Arc::new(client), Arc::new(server)))
+    }
+
+    /// [`tcp_pair`], plus a second handle on the local socket to see what it has received.
+    fn tcp_pair_with_local_view() -> (Shared, Shared, TcpStream) {
+        let listener = TcpDebugTransport::bind_loopback().expect("bind loopback");
+        let client =
+            TcpStream::connect(listener.local_addr().expect("listener address")).expect("connect");
+        let (server, _) = listener.accept().expect("accept");
+        let view = client.try_clone().expect("clone the local socket");
+        let (local, peer) = armed((
+            Arc::new(TcpDebugTransport::from_stream(client).expect("wrap the client")),
+            Arc::new(TcpDebugTransport::from_stream(server).expect("wrap the server")),
+        ));
+        (local, peer, view)
+    }
+
+    #[test]
+    fn tcp_debug_queued_frame_then_shutdown() {
+        let (local, peer, view) = tcp_pair_with_local_view();
+        // TCP accepts the first write on both platforms and reports the reset on a later one.
+        queued_then_shutdown_after(
+            "tcp_debug",
+            &local,
+            &peer,
+            Mode::Frame,
+            socket_expectation(),
+            PeerSend::Accepted,
+            // Blocks under the 5 s deadline `armed` set on this socket.
+            || {
+                let n = view
+                    .peek(&mut [0u8; 1])
+                    .expect("the queued frame reaches our socket");
+                assert!(n > 0, "tcp_debug: the queued frame, not an end of stream");
+            },
+        );
+    }
+
+    #[test]
+    fn tcp_debug_blocked_reader_is_woken() {
+        let (local, _peer) = tcp_pair();
+        blocked_reader_is_woken("tcp_debug", &local, Mode::Frame);
+    }
+
+    #[test]
+    fn tcp_debug_our_send_after_our_shutdown_fails() {
+        let (local, _peer) = tcp_pair();
+        our_send_after_our_shutdown_fails("tcp_debug", &local, Mode::Frame);
+    }
+
+    #[test]
+    fn tcp_debug_peer_closed_tracks_the_peer() {
+        let (local, peer) = tcp_pair();
+        peer_closed_tracks_the_peer("tcp_debug", &local, peer, closed_expectation(false));
+    }
+}
+
+#[cfg(feature = "rpc-tls")]
+mod tls {
+    use super::*;
+    use rsbinder::rpc::rustls::pki_types::pem::PemObject;
+    use rsbinder::rpc::rustls::pki_types::{CertificateDer, PrivateKeyDer};
+    use rsbinder::rpc::rustls::{ClientConfig, RootCertStore, ServerConfig};
+    use rsbinder::rpc::transport::TlsTransport;
+    use std::os::unix::net::UnixStream;
+
+    const CA: &str = include_str!("tls_fixtures/ca.crt");
+    const SRV_CRT: &str = include_str!("tls_fixtures/srv.crt");
+    const SRV_KEY: &str = include_str!("tls_fixtures/srv.key");
+
+    fn certs(pem: &str) -> Vec<CertificateDer<'static>> {
+        CertificateDer::pem_slice_iter(pem.as_bytes())
+            .collect::<Result<_, _>>()
+            .expect("parse certs")
+    }
+
+    /// TLS pair with both handshakes done, so no post-handshake write is pending at shutdown.
+    fn tls_pair() -> (Shared, Shared) {
+        let (s_srv, s_cli) = UnixStream::pair().expect("unix socketpair");
+        let srv_cfg = Arc::new(
+            ServerConfig::builder()
+                .with_no_client_auth()
+                .with_single_cert(
+                    certs(SRV_CRT),
+                    PrivateKeyDer::from_pem_slice(SRV_KEY.as_bytes()).expect("key"),
+                )
+                .expect("server config"),
+        );
+        let server = std::thread::spawn(move || {
+            TlsTransport::accept_stream(Box::new(s_srv), srv_cfg).expect("server handshake")
+        });
+        let mut roots = RootCertStore::empty();
+        for c in certs(CA) {
+            roots.add(c).expect("add ca");
+        }
+        let cli_cfg = Arc::new(
+            ClientConfig::builder()
+                .with_root_certificates(roots)
+                .with_no_client_auth(),
+        );
+        let client = TlsTransport::connect_stream(Box::new(s_cli), "localhost", cli_cfg)
+            .expect("client handshake");
+        let server = server.join().expect("server thread");
+        armed((Arc::new(client), Arc::new(server)))
+    }
+
+    #[test]
+    fn tls_queued_frame_then_shutdown() {
+        let (local, peer) = tls_pair();
+        // Over a unix socketpair here, so the peer's send follows AF_UNIX.
+        queued_then_shutdown(
+            "tls",
+            &local,
+            &peer,
+            Mode::Frame,
+            socket_expectation(),
+            unix_peer_send(),
+        );
+    }
+
+    #[test]
+    fn tls_blocked_reader_is_woken() {
+        let (local, _peer) = tls_pair();
+        blocked_reader_is_woken("tls", &local, Mode::Frame);
+    }
+
+    #[test]
+    fn tls_our_send_after_our_shutdown_fails() {
+        let (local, _peer) = tls_pair();
+        our_send_after_our_shutdown_fails("tls", &local, Mode::Frame);
+    }
+
+    /// The socket's close decides, so an unread record (here a whole frame) changes nothing.
+    #[test]
+    fn tls_peer_closed_tracks_the_peer() {
+        let (local, peer) = tls_pair();
+        peer_closed_tracks_the_peer("tls", &local, peer, closed_expectation(true));
+    }
+}

@@ -1,0 +1,1824 @@
+// Copyright 2022 Jeff Kim <hiking90@gmail.com>
+// SPDX-License-Identifier: Apache-2.0
+
+/*
+ * Copyright (C) 2020 The Android Open Source Project
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+//! Core binder functionality and traits.
+//!
+//! This module provides the fundamental types and traits for binder IPC,
+//! including interface definitions, binder object management, and transaction
+//! handling. It forms the foundation for all binder communication.
+//!
+//! # Which handle type do I use?
+//!
+//! The binder object zoo collapses to a few rules in practice. Almost all
+//! application code only ever touches the first two rows; the rest are
+//! plumbing the AIDL generator and the runtime fill in for you.
+//!
+//! | Type / trait | What it is | When you reach for it |
+//! |---|---|---|
+//! | [`Strong<dyn IFoo>`](Strong) | Owning, ref-counted handle to a service implementing interface `IFoo`. | The normal way to hold a service. Returned by `BnFoo::new_binder`, `hub::*_interface`, and `FromIBinder::try_from`; call interface methods directly on it. |
+//! | [`Weak<dyn IFoo>`](Weak) | Non-owning handle that does not keep the object alive. | Break reference cycles / caches; [`upgrade`](Weak::upgrade) back to a `Strong` when you need to call it. |
+//! | [`SIBinder`] | Type-erased strong handle (no interface type). | The raw currency passed to/from the kernel and APIs like [`crate::hub::add_service`]. Get one with `Into::into`/[`Interface::as_binder`]; recover a typed handle with [`SIBinder::into_interface`] / `FromIBinder::try_from`. |
+//! | [`WIBinder`] | Type-erased *weak* handle. | The erased counterpart of `Weak`, used internally by death recipients and notification registries. |
+//! | [`Interface`] | Base trait every binder interface (and service impl) implements. | Implement it on your service struct (often empty); its [`as_binder`](Interface::as_binder) is how you erase to `SIBinder`. |
+//! | [`Remotable`] | Trait for a *local* object that can receive transactions (a server). | Implemented by the generated `BnFoo`; you supply the behavior via `impl IFoo for …`. |
+//! | [`FromIBinder`] | Trait for casting an `SIBinder` to a typed interface. | Used through [`SIBinder::into_interface`] / `Strong::try_from`; the generator implements it per interface. |
+//! | [`crate::Proxy`] / [`crate::ProxyHandle`] | Client-side stand-in for a remote object (`BpFoo` wraps these). | You rarely name these; they back the `Strong<dyn IFoo>` you get for a *remote* service. |
+//! | [`RemoteProxy`] | Trait exposing remote-only ops (ping, link-to-death, …) on a handle. | Reach for it to ping a service or register a [`DeathRecipient`]. |
+//! | [`IBinder`] / [`Transactable`] | The low-level object and raw-`transact` traits. | Only when writing a transport or hand-rolling wire calls below the generated stubs. |
+
+use std::any::Any;
+use std::borrow::Borrow;
+use std::fmt::{Debug, Formatter};
+use std::marker::PhantomData;
+use std::mem::ManuallyDrop;
+use std::ops::Deref;
+use std::sync::{self, Arc};
+
+use crate::{error::*, parcel::*, proxy, sys};
+
+/// Binder action to perform.
+///
+/// This must be a number between [`FIRST_CALL_TRANSACTION`] and
+/// [`LAST_CALL_TRANSACTION`].
+pub type TransactionCode = u32;
+
+/// Additional operation flags.
+///
+/// `FLAG_*` values.
+pub type TransactionFlags = u32;
+
+/// Corresponds to TF_ONE_WAY -- an asynchronous call.
+pub const FLAG_ONEWAY: TransactionFlags = sys::TF_ONE_WAY;
+/// Corresponds to TF_CLEAR_BUF -- clear transaction buffers after call is made.
+pub const FLAG_CLEAR_BUF: TransactionFlags = sys::TF_CLEAR_BUF;
+/// `FLAG_PRIVATE_LOCAL` — the vendor flag on a VNDK build, `0` otherwise
+/// (AOSP `IBinder.h`). rsbinder targets the system side, so it is `0`; this is
+/// the flag the AIDL codegen emits on outgoing transactions.
+pub const FLAG_PRIVATE_LOCAL: TransactionFlags = 0;
+/// `FLAG_PRIVATE_VENDOR` (`0x10000000`, AOSP `IBinder.h`) — unconditional,
+/// unlike [`FLAG_PRIVATE_LOCAL`]. Marks a transaction as vendor-private.
+pub const FLAG_PRIVATE_VENDOR: TransactionFlags = 0x10000000;
+/// `TF_UPDATE_TXN` (0x40). Set together with [`FLAG_ONEWAY`] on a
+/// `transact()`. While the target process is frozen, the Android 12+
+/// driver replaces a queued oneway transaction from the same sender to the
+/// same node with the same `code` and flags instead of queueing both
+/// (`binder.c` `binder_can_update_transaction`); a target that is not
+/// frozen receives every transaction. Use for idempotent updates where
+/// only the freshest value matters. Without [`FLAG_ONEWAY`] the driver
+/// ignores the flag and returns no error.
+pub const FLAG_UPDATE_TXN: TransactionFlags = sys::TF_UPDATE_TXN;
+/// `FLAG_COLLECT_NOTED_APP_OPS` (`0x2`, AOSP `IBinder.java`). A userspace
+/// flag: the driver passes `flags` through, and Java
+/// `Binder.execTransactInternal` collects noted app-ops only when this bit
+/// is set; the reply parcel can then lead with a noted-AppOps blob (under
+/// `EX_HAS_NOTED_APPOPS_REPLY_HEADER = -127`), which the client side
+/// skips during exception decode (see `Status::deserialize`). No `TF_*` bit of the kernel UAPI
+/// (`include/uapi/linux/android/binder.h`) uses `0x2`.
+pub const FLAG_COLLECT_NOTED_APP_OPS: TransactionFlags = 0x2;
+
+const fn b_pack_chars(c1: char, c2: char, c3: char, c4: char) -> u32 {
+    ((c1 as u32) << 24) | ((c2 as u32) << 16) | ((c3 as u32) << 8) | (c4 as u32)
+}
+
+pub const FIRST_CALL_TRANSACTION: u32 = 0x00000001;
+pub const LAST_CALL_TRANSACTION: u32 = 0x00ffffff;
+
+pub const PING_TRANSACTION: u32 = b_pack_chars('_', 'P', 'N', 'G');
+pub const DUMP_TRANSACTION: u32 = b_pack_chars('_', 'D', 'M', 'P');
+pub const SHELL_COMMAND_TRANSACTION: u32 = b_pack_chars('_', 'C', 'M', 'D');
+// It must be used to ask binder's interface name.
+pub const INTERFACE_TRANSACTION: u32 = b_pack_chars('_', 'N', 'T', 'F');
+pub const SYSPROPS_TRANSACTION: u32 = b_pack_chars('_', 'S', 'P', 'R');
+pub const EXTENSION_TRANSACTION: u32 = b_pack_chars('_', 'E', 'X', 'T');
+pub const DEBUG_PID_TRANSACTION: u32 = b_pack_chars('_', 'P', 'I', 'D');
+pub const SET_RPC_CLIENT_TRANSACTION: u32 = b_pack_chars('_', 'R', 'P', 'C');
+
+pub const START_RECORDING_TRANSACTION: u32 = b_pack_chars('_', 'S', 'R', 'D');
+pub const STOP_RECORDING_TRANSACTION: u32 = b_pack_chars('_', 'E', 'R', 'D');
+
+// See android.os.IBinder.TWEET_TRANSACTION.
+pub const TWEET_TRANSACTION: u32 = b_pack_chars('_', 'T', 'W', 'T');
+
+// See android.os.IBinder.LIKE_TRANSACTION.
+pub const LIKE_TRANSACTION: u32 = b_pack_chars('_', 'L', 'I', 'K');
+
+pub const INTERFACE_HEADER: u32 = b_pack_chars('S', 'Y', 'S', 'T');
+
+/// Base trait for all binder interfaces.
+///
+/// This trait allows conversion of a binder interface trait object into an
+/// IBinder object for IPC calls. All binder remotable interfaces (i.e., AIDL
+/// interfaces) must implement this trait to participate in binder IPC.
+///
+/// Equivalent to `IInterface` in Android's C++ binder implementation.
+pub trait Interface: Send + Sync {
+    /// Convert this binder object into a generic [`SIBinder`] reference.
+    ///
+    /// Has a default because AIDL interface traits have `Interface` as a
+    /// supertrait, so every service impl must write `impl Interface for
+    /// MyService {}`; the inner service value is never itself a binder
+    /// (it is wrapped by a generated `Bn*`), so calling `as_binder` on it
+    /// is a programmer error. Real binder types (native `Binder<T>`,
+    /// generated `Bp*` proxies, async wrappers) all override this.
+    fn as_binder(&self) -> SIBinder {
+        log::error!(
+            "as_binder() called on non-Binder object of type {}. \
+             This is a programmer error - only Binder objects should implement Interface.",
+            std::any::type_name::<Self>()
+        );
+        // Reachable from safe code (an empty `impl Interface`): `panic!`, not `unreachable!`.
+        panic!(
+            "as_binder() called on a non-binder Interface impl ({}): wrap the \
+             service with Bn*::new_binder before creating a Strong handle",
+            std::any::type_name::<Self>()
+        )
+    }
+
+    /// Dump transaction handler for this Binder object.
+    ///
+    /// This handler is a no-op by default and should be implemented for each
+    /// Binder service struct that wishes to respond to dump transactions.
+    fn dump(&self, _writer: &mut dyn std::io::Write, _args: &[String]) -> Result<()> {
+        Ok(())
+    }
+}
+
+/// Trait for converting a generic Binder object into a specific Binder
+///
+/// # Example
+///
+/// For Binder interface `IFoo`, the following implementation should be made:
+/// ```no_run
+/// # use rsbinder::{FromIBinder, SIBinder, Interface, Result, Strong};
+/// # trait IFoo : Interface {}
+/// impl FromIBinder for dyn IFoo {
+///     fn try_from(ibinder: SIBinder) -> Result<Strong<Self>> {
+///         // ...
+///         # Err(rsbinder::StatusCode::Ok)
+///     }
+/// }
+/// ```
+pub trait FromIBinder: Interface {
+    /// Try to interpret a generic Binder object as this interface.
+    ///
+    /// Returns a trait object for the `Self` interface if this object
+    /// implements that interface.
+    fn try_from(ibinder: SIBinder) -> Result<Strong<Self>>;
+}
+
+/// Interface for receiving a notification when a binder object is no longer
+/// valid.
+///
+/// This trait corresponds to the parts of the interface of the C++ `DeathRecipient`
+/// Callback interface for binder death notifications.
+///
+/// Implement this trait to receive notifications when a remote binder object dies.
+/// This is essential for cleanup and error handling in distributed systems.
+///
+/// # Panic safety
+///
+/// `binder_died` is invoked from the binder worker thread that processes
+/// `BR_DEAD_BINDER` from the kernel. rsbinder catches panics from
+/// `binder_died` per-recipient and logs them, so:
+///
+/// - A panic in one recipient does **not** prevent other recipients
+///   registered against the same binder from receiving their own
+///   `binder_died` callback.
+/// - A panic in `binder_died` does **not** terminate the binder worker
+///   thread.
+///
+/// rsbinder does **not** repair the panicking recipient's own internal
+/// state across the unwind boundary — implementations should keep
+/// `binder_died` panic-free to begin with, and use this guard only as a
+/// safety net.
+///
+/// The guard relies on `panic = "unwind"` (Rust's default). Builds that
+/// use `panic = "abort"` abort the whole process on any panic, including
+/// from `binder_died`, and the per-recipient isolation degrades to the
+/// abort behavior.
+pub trait DeathRecipient: Send + Sync {
+    /// Called when the monitored binder object has died.
+    ///
+    /// `who` names the binder that died. A recipient watching more than
+    /// one binder identifies it by comparing against the strong references
+    /// it holds — [`WIBinder`] implements `PartialEq<SIBinder>` for exactly
+    /// this:
+    ///
+    /// ```ignore
+    /// fn binder_died(&self, who: &WIBinder) {
+    ///     self.services.lock().unwrap().retain(|svc| *who != svc.binder);
+    /// }
+    /// ```
+    ///
+    /// # Reentrancy
+    ///
+    /// This runs on the binder worker thread that received the obituary,
+    /// with no rsbinder lock held. Outbound binder calls are allowed, but
+    /// a recipient that holds its own lock across one risks deadlocking
+    /// against a transaction arriving on another thread — collect the work
+    /// under the lock and perform it after dropping the guard.
+    fn binder_died(&self, who: &WIBinder);
+}
+
+/// Freeze state of the process hosting a remote binder, as the kernel binder
+/// driver reports it. AOSP `IBinder::FrozenStateChangeCallback::State`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum FrozenState {
+    /// The hosting process is frozen: it serves no transaction until thawed.
+    Frozen,
+    /// The hosting process is not frozen.
+    Unfrozen,
+}
+
+impl From<bool> for FrozenState {
+    fn from(is_frozen: bool) -> Self {
+        if is_frozen {
+            FrozenState::Frozen
+        } else {
+            FrozenState::Unfrozen
+        }
+    }
+}
+
+/// Receives freeze state changes of the process hosting a remote binder.
+/// AOSP `IBinder::FrozenStateChangeCallback`; register it with
+/// [`IBinder::add_frozen_state_change_callback`].
+///
+/// # Delivery
+///
+/// - The first call reports the state at registration time; later calls
+///   report changes only, so one state never arrives twice in a row.
+/// - Changes that happen before the previous one is delivered are combined
+///   into the latest state, as AOSP documents: `Frozen` then `Unfrozen` may
+///   reach the callback as `Unfrozen` alone. Do not count calls.
+/// - Calls for one binder are made one at a time, in the order the kernel
+///   reported the states.
+/// - Calls run with no rsbinder lock held, usually on a binder looper thread
+///   (the thread pool, or a thread in
+///   [`ProcessState::join_thread_pool`](crate::ProcessState::join_thread_pool));
+///   without a looper thread nothing is delivered.
+/// - A callback added after the kernel already reported a state gets that
+///   state from the adding thread, inside
+///   [`IBinder::add_frozen_state_change_callback`], as in AOSP. While it is
+///   delivering, that thread also delivers any state that arrives
+///   meanwhile, to every callback of the binder, so do not hold a lock
+///   across the add that a callback takes. If a looper is delivering
+///   already, the new callback gets the state from the looper instead,
+///   possibly after the add returns.
+///
+/// # Panic safety
+///
+/// A panic in `on_state_changed` is caught and logged, as for
+/// [`DeathRecipient::binder_died`]; the same `panic = "unwind"` caveat applies.
+pub trait FrozenStateChangeCallback: Send + Sync {
+    /// Called with the new freeze state of `who`'s hosting process.
+    ///
+    /// `who` is a weak reference to the binder the callback was registered
+    /// on; compare it against held `SIBinder`s to tell binders apart.
+    /// Outbound binder calls are allowed here.
+    fn on_state_changed(&self, who: &WIBinder, state: FrozenState);
+}
+
+/// Core interface for binder objects, both local and remote.
+///
+/// This trait corresponds to the public interface of the C++ `IBinder` class,
+/// providing the fundamental operations available on all binder objects
+/// regardless of whether they represent local services or remote proxies.
+pub trait IBinder: Any + Send + Sync {
+    /// Register the recipient for a notification if this binder
+    /// goes away. If this binder object unexpectedly goes away
+    /// (typically because its hosting process has been killed),
+    /// then the `DeathRecipient`'s callback will be called.
+    ///
+    /// You will only receive death notifications for remote binders,
+    /// as local binders by definition can't die without you dying as well.
+    /// Trying to use this function on a local binder will result in an
+    /// INVALID_OPERATION code being returned and nothing happening.
+    ///
+    /// This link always holds a weak reference to its recipient, so the
+    /// caller must keep its own strong `Arc` to the recipient alive for the
+    /// duration of the link — otherwise the notification silently never fires.
+    ///
+    /// Over the RPC transport, death is detected as a dropped session
+    /// connection rather than a kernel `BR_DEAD_BINDER`, and the link is
+    /// refused with `InvalidOperation` unless this side's session notices a
+    /// connection loss: the server side, a client with incoming
+    /// connections, or a session whose serve loop runs (`spawn_serve` /
+    /// `serve_blocking`); see the `rpc` proxy implementation for details.
+    fn link_to_death(&self, recipient: sync::Weak<dyn DeathRecipient>) -> Result<()>;
+
+    /// Remove a previously registered death notification.
+    /// The recipient will no longer be called if this object
+    /// dies.
+    fn unlink_to_death(&self, recipient: sync::Weak<dyn DeathRecipient>) -> Result<()>;
+
+    /// Register `callback` for freeze state changes of the process hosting
+    /// this remote binder. AOSP `IBinder::addFrozenStateChangeCallback`
+    /// (libbinder `android-15.0.0_r6` and later, Java API in Android 16).
+    ///
+    /// The callback is invoked with the state at registration time, then on
+    /// each change; see [`FrozenStateChangeCallback`] for delivery rules.
+    /// The state is the one the kernel binder driver tracks, set by
+    /// `BINDER_FREEZE` (on Android, the cached-app freezer;
+    /// [`ProcessState::freeze_process`](crate::ProcessState::freeze_process)
+    /// elsewhere). A cgroup freezer alone produces no notification.
+    ///
+    /// This link holds a weak reference to `callback`: keep a strong `Arc`
+    /// alive, or the callback silently never fires. Registrations are
+    /// removed automatically when the last strong reference to the proxy
+    /// is dropped, as AOSP does.
+    ///
+    /// # Errors
+    ///
+    /// - [`StatusCode::BadValue`] if `callback` is already dropped.
+    /// - [`StatusCode::InvalidOperation`] if the driver lacks freeze
+    ///   notification (`features/freeze_notification` absent or `0`), and
+    ///   for every binder that is not a kernel proxy: a local binder (it
+    ///   cannot be frozen without this process being frozen too), and an
+    ///   RPC proxy. Only the kernel binder driver knows a process's freeze
+    ///   state, and the RPC wire carries no freeze command (AOSP's RPC binder
+    ///   aborts here instead). Over RPC, a peer's exit or lost connection
+    ///   is reported by [`link_to_death`](Self::link_to_death); a peer that
+    ///   stops answering while its socket stays open is visible only as a
+    ///   reply timeout. A gateway that re-exports a kernel binder over RPC
+    ///   does not forward its freeze state.
+    fn add_frozen_state_change_callback(
+        &self,
+        callback: sync::Weak<dyn FrozenStateChangeCallback>,
+    ) -> Result<()> {
+        let _ = callback;
+        Err(StatusCode::InvalidOperation)
+    }
+
+    /// Remove a callback registered with
+    /// [`add_frozen_state_change_callback`](Self::add_frozen_state_change_callback).
+    /// Removes the first matching registration only, as AOSP.
+    ///
+    /// Returns [`StatusCode::NameNotFound`] if `callback` is not registered
+    /// on this proxy (including on a driver without freeze notification, as
+    /// AOSP), and [`StatusCode::InvalidOperation`] for a binder that is not a
+    /// kernel proxy.
+    fn remove_frozen_state_change_callback(
+        &self,
+        callback: sync::Weak<dyn FrozenStateChangeCallback>,
+    ) -> Result<()> {
+        let _ = callback;
+        Err(StatusCode::InvalidOperation)
+    }
+
+    /// Send a ping transaction to this object
+    fn ping_binder(&self) -> Result<()>;
+
+    /// To support dynamic interface cast, we need to know the interface
+    fn as_any(&self) -> &dyn Any;
+
+    /// To convert the interface to a transactable object
+    fn as_transactable(&self) -> Option<&dyn Transactable>;
+
+    /// Retrieve the descriptor of this object.
+    fn descriptor(&self) -> &str;
+    /// Retrieve if this object is remote.
+    fn is_remote(&self) -> bool;
+
+    /// Retrieve the stability level of this binder object.
+    fn stability(&self) -> Stability {
+        Stability::default()
+    }
+
+    /// Return the extension binder object, if set. Returns None if no extension is set.
+    ///
+    /// On a proxy this issues a remote `EXTENSION_TRANSACTION` and
+    /// caches the result; subsequent calls return the cached value.
+    /// On a native binder it returns the locally-stored extension.
+    ///
+    /// **Staleness on proxy.** The proxy cache holds a strong
+    /// `SIBinder` for the parent's lifetime in the common case (see the
+    /// `proxy` module doc, "Extension cache", for the cache shape and
+    /// the `BC_RELEASE`/`BC_ACQUIRE` thrash motivation). The cache
+    /// is **not** invalidated when the extension itself is
+    /// obituary'd: subsequent `get_extension()` calls return the same
+    /// dead `SIBinder`, and IPC through it fast-fails with
+    /// `DeadObject` via `submit_transact`'s obituary check. A server
+    /// that re-publishes a fresh extension after the previous one
+    /// died is invisible to the client until the parent itself is
+    /// dropped and re-acquired. Matches Android C++ `BpBinder` —
+    /// not a correctness bug, but worth knowing for clients that
+    /// rely on dynamic re-publication.
+    fn get_extension(&self) -> Result<Option<SIBinder>> {
+        Ok(None)
+    }
+
+    /// Set the extension binder object.
+    ///
+    /// **Server-side only.** A service publishes its extension binder
+    /// via this call so clients can discover it through
+    /// `get_extension()`. Native binder implementations store the
+    /// extension locally; the default returns
+    /// `Err(StatusCode::InvalidOperation)`.
+    ///
+    /// Calling this on a **proxy** (client-side `ProxyHandle`) is a
+    /// programming error — a proxy has no way to inform the remote
+    /// service of the new extension, so the call would only mutate
+    /// the local cache and silently pin an unrelated `Arc<dyn IBinder>`
+    /// for the parent's lifetime. `ProxyHandle::set_extension` therefore
+    /// rejects with `InvalidOperation`.
+    fn set_extension(&self, _extension: &SIBinder) -> Result<()> {
+        Err(StatusCode::InvalidOperation)
+    }
+
+    /// Local binder flags exported to the binder driver via
+    /// `flat_binder_object.flags`. Only native binders return a meaningful
+    /// value; proxies and test mocks inherit the `0` default.
+    fn local_binder_flags(&self) -> u32 {
+        0
+    }
+
+    /// Runtime stability downgrade to
+    /// [`Stability::System`] (AOSP [`Stability::forceDowngradeToSystemStability`](https://cs.android.com/android/platform/superproject/+/android-16.0.0_r4:frameworks/native/libs/binder/Stability.cpp;l=41) equivalent).
+    ///
+    /// Only meaningful on native binders ([`crate::Binder<T>`]); proxies and
+    /// the default-impl trait objects return `Err(StatusCode::InvalidOperation)`.
+    ///
+    /// **Parceled guard.** Returns `Err(StatusCode::InvalidOperation)` once
+    /// the binder has been written to a parcel (i.e. transferred via IPC).
+    /// Mirror of AOSP [`BBinder::setParceled`](https://cs.android.com/android/platform/superproject/+/android-16.0.0_r4:frameworks/native/libs/binder/Binder.cpp;l=722)
+    /// — see [`Self::set_parceled`].
+    fn force_downgrade_to_system_stability(&self) -> Result<()> {
+        Err(StatusCode::InvalidOperation)
+    }
+
+    /// Runtime stability downgrade to
+    /// [`Stability::Vendor`] (AOSP [`Stability::forceDowngradeToVendorStability`](https://cs.android.com/android/platform/superproject/+/android-16.0.0_r4:frameworks/native/libs/binder/Stability.cpp;l=45) equivalent).
+    ///
+    /// See [`Self::force_downgrade_to_system_stability`] for the parceled
+    /// guard contract.
+    fn force_downgrade_to_vendor_stability(&self) -> Result<()> {
+        Err(StatusCode::InvalidOperation)
+    }
+
+    /// Runtime mark this binder as
+    /// [`Stability::Vintf`] (AOSP [`Stability::markVintf`](https://cs.android.com/android/platform/superproject/+/android-16.0.0_r4:frameworks/native/libs/binder/Stability.cpp;l=54) equivalent).
+    ///
+    /// Typically the AIDL generator emits this for an interface annotated
+    /// `@VintfStability`; reach for the runtime API only when the generator
+    /// path is unavailable (handwritten binders).
+    ///
+    /// See [`Self::force_downgrade_to_system_stability`] for the parceled
+    /// guard contract.
+    fn mark_vintf(&self) -> Result<()> {
+        Err(StatusCode::InvalidOperation)
+    }
+
+    /// Observability hook: has this binder already been
+    /// written to a parcel (and therefore frozen against mutation)?
+    /// Default: `false`. Native binders override with the underlying
+    /// `AtomicBool` load. AOSP [`BBinder::wasParceled`](https://cs.android.com/android/platform/superproject/+/android-16.0.0_r4:frameworks/native/libs/binder/Binder.cpp;l=721) equivalent.
+    fn was_parceled(&self) -> bool {
+        false
+    }
+
+    /// Internal mark-as-parceled hook, invoked by the
+    /// parcel layer the first time this binder is serialized. Default is a
+    /// no-op (proxies and test mocks are not subject to the parceled
+    /// guard). AOSP [`BBinder::setParceled`](https://cs.android.com/android/platform/superproject/+/android-16.0.0_r4:frameworks/native/libs/binder/Binder.cpp;l=725) equivalent.
+    fn set_parceled(&self) {}
+
+    /// RPC server dispatch entrypoint.
+    ///
+    /// The RPC server adapter calls this *instead of* the kernel
+    /// `Transactable::transact` → `thread_state::check_interface`
+    /// path. `check_interface` reads the kernel transaction header and
+    /// mutates `THREAD_STATE` (strict-mode / work-source) — both
+    /// meaningless for RPC and forbidden to touch. The adapter has
+    /// already consumed + validated the RPC interface token, so this
+    /// just dispatches `code` to the generated, transport-neutral
+    /// `Remotable::on_transact`. Native binders override it; the
+    /// default is "not an RPC dispatch target".
+    ///
+    /// Present only with the `rpc` feature, so the default public API
+    /// surface is unchanged.
+    #[cfg(feature = "rpc")]
+    fn rpc_transact(
+        &self,
+        code: TransactionCode,
+        reader: &mut Parcel,
+        reply: &mut Parcel,
+    ) -> Result<()> {
+        let _ = (code, reader, reply);
+        Err(StatusCode::UnknownTransaction)
+    }
+
+    fn inc_strong(&self, strong: &SIBinder) -> Result<()>;
+    fn attempt_inc_strong(&self) -> bool;
+    fn dec_strong(&self, strong: Option<ManuallyDrop<SIBinder>>) -> Result<()>;
+    fn inc_weak(&self, weak: &WIBinder) -> Result<()>;
+    fn dec_weak(&self) -> Result<()>;
+}
+
+/// An outbound-transaction-issuing proxy, abstract over the kernel
+/// (`proxy::ProxyHandle`) and RPC (`rpc::RpcProxy`) stacks. The AIDL
+/// generator emits `as_remote().ok_or(BadType)?` so one generated
+/// `Bp*` drives either stack via this trait + the
+/// `<dyn IBinder>::as_remote()` accessor; the kernel-only `as_proxy()`
+/// is retained for any direct callers.
+///
+/// The signatures are exactly `ProxyHandle`'s existing inherent
+/// `prepare_transact`/`submit_transact` — `ProxyHandle` implements
+/// this by **delegating to those unchanged methods**, so the kernel
+/// proxy's runtime behavior is bit-identical by construction (no
+/// codegen change required for the kernel path).
+pub trait RemoteProxy {
+    /// Allocate the request `Parcel`, optionally writing the AIDL
+    /// interface header.
+    fn prepare_transact(&self, write_header: bool) -> Result<Parcel>;
+    /// Submit the transaction and return the reply (`None` for oneway).
+    fn submit_transact(
+        &self,
+        code: TransactionCode,
+        data: &Parcel,
+        flags: TransactionFlags,
+    ) -> Result<Option<Parcel>>;
+}
+
+impl dyn IBinder {
+    /// Convert this binder object into a proxy binder object.
+    pub fn as_proxy(&self) -> Option<&proxy::ProxyHandle> {
+        self.as_any().downcast_ref::<proxy::ProxyHandle>()
+    }
+
+    /// Generalized proxy dispatch: a kernel
+    /// [`proxy::ProxyHandle`] **or** (with the `rpc` feature) an
+    /// `rpc::RpcProxy`, as a single
+    /// [`RemoteProxy`] trait object. Lets one generated `Bp*` stub
+    /// call either stack. `as_proxy()` is retained unchanged so the
+    /// existing generated kernel code keeps working verbatim.
+    pub fn as_remote(&self) -> Option<&dyn RemoteProxy> {
+        if let Some(p) = self.as_any().downcast_ref::<proxy::ProxyHandle>() {
+            return Some(p as &dyn RemoteProxy);
+        }
+        #[cfg(feature = "rpc")]
+        if let Some(p) = self.as_any().downcast_ref::<crate::rpc::RpcProxy>() {
+            return Some(p as &dyn RemoteProxy);
+        }
+        None
+    }
+}
+
+/// Stamp the generated stub's interface descriptor onto an `RpcProxy`
+/// resolved from the RPC wire (the wire carries only an address, so
+/// such a proxy starts descriptor-less). A `#[doc(hidden)]` shim the
+/// generated `from_binder` calls unconditionally — the feature gate
+/// lives **here**, resolved against rsbinder's own `rpc` feature, not
+/// in the `macro_rules!` (where `cfg(feature = "rpc")` would wrongly
+/// resolve against the *consumer* crate). The non-`rpc` build is a
+/// zero-cost no-op, so the kernel path and `rpc`-off consumers stay
+/// byte-unaffected.
+#[doc(hidden)]
+#[cfg(feature = "rpc")]
+pub fn __rpc_stamp_descriptor(binder: &SIBinder, descriptor: &str) {
+    if let Some(rp) = (**binder).as_any().downcast_ref::<crate::rpc::RpcProxy>() {
+        rp.stamp_descriptor(descriptor);
+    }
+}
+
+/// No-op shim (see the `rpc`-gated variant): keeps the generated
+/// `from_binder` compiling identically with or without `rpc`.
+#[doc(hidden)]
+#[cfg(not(feature = "rpc"))]
+pub fn __rpc_stamp_descriptor(_binder: &SIBinder, _descriptor: &str) {}
+
+impl std::fmt::Debug for dyn IBinder {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        // `as_any()` would format as the useless `Any { .. }`; show the useful fields instead.
+        f.debug_struct("dyn IBinder")
+            .field("descriptor", &self.descriptor())
+            .field("remote", &self.is_remote())
+            .finish()
+    }
+}
+
+/// Trait for local services that can be exposed via binder IPC.
+///
+/// Objects implementing this trait can be wrapped in a `Binder<T>` to create
+/// a binder service that can receive and handle incoming transactions.
+///
+/// This is typically auto-generated from AIDL definitions and should not
+/// be implemented manually. The AIDL compiler generates the necessary
+/// transaction handling code that implements this trait.
+pub trait Remotable: Send + Sync {
+    /// The Binder interface descriptor string.
+    ///
+    /// This string is a unique identifier for a Binder interface, and should be
+    /// the same between all implementations of that interface.
+    fn descriptor() -> &'static str
+    where
+        Self: Sized;
+
+    /// Handle and reply to a request to invoke a transaction on this object.
+    ///
+    /// `reply` may be [`None`] if the sender does not expect a reply.
+    /// An `Err` is the reply status a remote caller receives, except that
+    /// `DeadObject` is sent as `FailedTransaction` ([`Transactable`]
+    /// "Handler errors").
+    fn on_transact(
+        &self,
+        code: TransactionCode,
+        reader: &mut Parcel,
+        reply: &mut Parcel,
+    ) -> Result<()>;
+
+    /// Handle a request to invoke the dump transaction on this
+    /// object.
+    ///
+    /// An `Err` is the reply status, as for [`on_transact`](Self::on_transact):
+    /// `?` on a write to a pipe whose reader exited (`EPIPE`, so `DeadObject`)
+    /// reaches the caller as `FailedTransaction`, which leaves its proxy alive.
+    fn on_dump(&self, writer: &mut dyn std::io::Write, args: &[String]) -> Result<()>;
+
+    /// The AIDL method name for a transaction code, for tracing and
+    /// transaction observers. `None` when the code names no method or the
+    /// interface carries no name table.
+    ///
+    /// Interfaces generated with `rsbinder_aidl::Builder::trace(true)`
+    /// (AOSP `aidl --trace`) answer for their methods and for the
+    /// stable-AIDL meta methods `getInterfaceVersion` / `getInterfaceHash`.
+    /// Everything else, including hand-written `Remotable`s, keeps this
+    /// default. The name table costs one `&'static str` per method, which
+    /// is why it is opt-in, as in AOSP.
+    fn transaction_name(_code: TransactionCode) -> Option<&'static str>
+    where
+        Self: Sized,
+    {
+        None
+    }
+}
+
+/// Look up `code` in a generated method-name table (index = `code -
+/// FIRST_CALL_TRANSACTION`, `""` for an unused id). Mirrors AOSP
+/// `getMethodName` (`libs/binder/ndk/ibinder.cpp`), including the two
+/// meta methods it answers without a table entry; an unused id is `None`
+/// where AOSP returns the empty string.
+#[doc(hidden)]
+pub fn __transaction_name(
+    names: &'static [&'static str],
+    code: TransactionCode,
+) -> Option<&'static str> {
+    // AOSP `system/tools/aidl/include/aidl/transaction_ids.h`.
+    const GET_INTERFACE_VERSION: TransactionCode = FIRST_CALL_TRANSACTION + 16_777_214;
+    const GET_INTERFACE_HASH: TransactionCode = FIRST_CALL_TRANSACTION + 16_777_213;
+    match code {
+        GET_INTERFACE_VERSION => Some("getInterfaceVersion"),
+        GET_INTERFACE_HASH => Some("getInterfaceHash"),
+        _ => code
+            .checked_sub(FIRST_CALL_TRANSACTION)
+            .and_then(|index| names.get(index as usize))
+            .copied()
+            .filter(|name| !name.is_empty()),
+    }
+}
+
+/// A transactable object that can be used to process Binder commands.
+///
+/// # Panic safety
+///
+/// `transact` is invoked from the binder worker thread that processes
+/// incoming `BR_TRANSACTION` from the kernel. rsbinder catches panics
+/// from `transact` and converts them to `Err(StatusCode::Unknown)`, so:
+///
+/// - A panic in `transact` does **not** terminate the binder worker
+///   thread; subsequent transactions on the same thread continue to be
+///   processed.
+/// - For non-oneway calls, the calling client receives a deterministic
+///   error reply (`StatusCode::Unknown`) instead of hanging on a never-
+///   sent `BR_REPLY`. Any partially-written reply parcel is discarded
+///   before the error is returned, so the client does not misparse
+///   half-formed data.
+/// - For oneway calls, the panic is logged and the transaction is
+///   dropped (matching the existing oneway `Err` path).
+///
+/// rsbinder does **not** repair the panicking transactable's own
+/// internal state across the unwind boundary — implementations should
+/// keep `transact` panic-free to begin with, and use this guard only
+/// as a safety net.
+///
+/// The guard relies on `panic = "unwind"` (Rust's default). Builds that
+/// use `panic = "abort"` abort the whole process on any panic,
+/// including from `transact`, and the per-transaction isolation
+/// degrades to the abort behavior.
+///
+/// # Handler errors
+///
+/// An `Err` from `transact` becomes the reply status a remote caller
+/// receives, over the kernel binder and over RPC alike, with one
+/// substitution: `Err(StatusCode::DeadObject)` is sent as
+/// `StatusCode::FailedTransaction`. An AOSP `BpBinder` that receives
+/// `DEAD_OBJECT` as a reply status sets `mAlive = 0`
+/// (`BpBinder::transact`, android17-release), and from then on returns
+/// `DEAD_OBJECT` for every call on that proxy without sending it, so one
+/// handler error would cut the caller off from a service that is still
+/// running. `DeadObject` reaches a handler as an ordinary value: `?` on a
+/// nested call to a dead binder, or on a `std::io::Error` of kind
+/// `BrokenPipe` (`EPIPE`, which is `DEAD_OBJECT`), such as an `on_dump`
+/// writing to a pipe whose reader exited. `FailedTransaction` fails the
+/// one call and leaves the proxy alive. This covers a `Status` with
+/// `ExceptionCode::TransactionFailed` too, which a generated stub sends
+/// as the reply status, not in the reply parcel. A local (in-process)
+/// call is not a reply and returns the handler's `Err` unchanged.
+pub trait Transactable: Send + Sync {
+    fn transact(
+        &self,
+        code: TransactionCode,
+        reader: &mut Parcel,
+        reply: &mut Parcel,
+    ) -> Result<()>;
+
+    /// The method name for `code`, reported to transaction observers
+    /// ([`observe`](crate::observe)). A local binder built from a
+    /// [`Remotable`] forwards to [`Remotable::transaction_name`].
+    fn transaction_name(&self, _code: TransactionCode) -> Option<&'static str> {
+        None
+    }
+}
+
+/// The reply status for a handler's `Err`; see [`Transactable`] "Handler errors".
+pub(crate) fn handler_reply_status(err: StatusCode) -> StatusCode {
+    match err {
+        StatusCode::DeadObject => {
+            log::debug!("a handler returned DeadObject; replying FailedTransaction");
+            StatusCode::FailedTransaction
+        }
+        other => other,
+    }
+}
+
+/// Implemented by sync interfaces to specify what the associated async interface is.
+/// Generic to handle the fact that async interfaces are generic over a thread pool.
+///
+/// The binder in any object implementing this trait should be compatible with the
+/// `Target` associated type, and using `FromIBinder` to convert it to the target
+/// should not fail.
+pub trait ToAsyncInterface<P>
+where
+    Self: Interface,
+    Self::Target: FromIBinder,
+{
+    /// The async interface associated with this sync interface.
+    type Target: ?Sized;
+}
+
+/// Implemented by async interfaces to specify what the associated sync interface is.
+///
+/// The binder in any object implementing this trait should be compatible with the
+/// `Target` associated type, and using `FromIBinder` to convert it to the target
+/// should not fail.
+pub trait ToSyncInterface
+where
+    Self: Interface,
+    Self::Target: FromIBinder,
+{
+    /// The sync interface associated with this async interface.
+    type Target: ?Sized;
+}
+
+/// Interface stability promise
+///
+/// An interface can promise to be a stable vendor interface ([`Stability::Vintf`]), or
+/// makes no stability guarantees ([`Stability::Local`]). [`Stability::System`] is
+/// the default stability, matching Android's `getLocalLevel()` for non-VNDK builds.
+///
+/// # Wire encoding
+///
+/// Android 12 (SDK 31/32) writes the stability field as
+/// `Category::repr()` = `(level << 24) | version`, the level in the high
+/// byte and a nonzero wire-format version in the low byte. android-11,
+/// android-13+ and non-Android builds write the raw `Level`: the level value
+/// itself (0/3/12/63) in the low byte, high bytes zero. On Android the encoder
+/// picks by the runtime SDK version (`frameworks/native/libs/binder/include/binder/Stability.h`,
+/// android-11.0.0_r21 through android-14.0.0_r2). That choice is the kernel
+/// path's and the android-13+ RPC wire's: an RPC session on the r34 wire
+/// always writes the android-12 form, since its peer is android-12 libbinder
+/// whatever the host's SDK.
+///
+/// AOSP-12 declares `Category { uint8_t version; uint8_t reserved[2]; Level level; }`,
+/// builds it with `currentFromLevel` = `{ version: 1, reserved: 0, level }`, and
+/// reinterprets it as an `int32_t`. The stability word is an ordinary wire `i32`
+/// and the wire is little-endian on every host, so `(level << 24) | version`
+/// holds everywhere and the encoder needs no `target_endian` branch
+/// (`frameworks/native/libs/binder/{include/binder/Stability.h,Stability.cpp}`,
+/// android-12.0.0_r34).
+///
+/// The decoder accepts both. If any bit above the low byte is set, the value
+/// is a Category and decodes by level whatever its version byte. Otherwise
+/// the low byte is the raw level — except the bare android-12 wire-format
+/// version `0x0000_0001` (Category with level 0), which decodes to `Local`. A
+/// level-0 Category with any other version byte is byte-ambiguous with a raw
+/// level and cannot be distinguished; AOSP-12 only ever writes version 1.
+#[derive(Default, Debug, Copy, Clone, PartialEq, Eq)]
+pub enum Stability {
+    /// Default stability, visible to other modules in the same compilation
+    /// context (e.g. modules on system.img)
+    Local,
+    Vendor,
+    #[default]
+    System,
+
+    /// A Vendor Interface Object, which promises to be stable
+    Vintf,
+}
+
+impl Stability {
+    /// Android bitmask-compatible verification.
+    ///
+    /// Checks whether `self` (provider) includes the `required` stability level.
+    /// e.g., Vintf includes all levels. System and Vendor are independent domains.
+    pub fn includes(&self, required: Stability) -> bool {
+        let provided: i32 = (*self).into();
+        let required: i32 = required.into();
+        (provided & required) == required
+    }
+
+    /// AOSP `Stability::Level`: the raw bitmask, `UNDECLARED` (0) for `Local`.
+    pub(crate) const fn level(self) -> i32 {
+        match self {
+            Stability::Local => 0,
+            Stability::Vendor => 0b000011,
+            Stability::System => 0b001100,
+            Stability::Vintf => 0b111111,
+        }
+    }
+}
+
+/// AOSP `Stability::kBinderWireFormatVersion` (`Stability.cpp:31`), stamped into a `Category`.
+const BINDER_WIRE_FORMAT_VERSION: i32 = 1;
+
+/// android-12 `Category::repr()` for a raw `Level`; see `Stability` doc "Wire encoding".
+// The `target_os = "android"` encode branch and the r34 RPC wire, which always speaks it.
+#[cfg(any(target_os = "android", feature = "rpc", test))]
+pub(crate) const fn android12_category_repr(level: i32) -> i32 {
+    (level << 24) | BINDER_WIRE_FORMAT_VERSION
+}
+
+// Encoding chosen by SDK version: see the `Stability` rustdoc, "Wire encoding".
+impl From<Stability> for i32 {
+    fn from(stability: Stability) -> i32 {
+        let level = stability.level();
+
+        #[cfg(target_os = "android")]
+        {
+            let android_sdk_version = crate::get_android_sdk_version();
+            if android_sdk_version == 31 || android_sdk_version == 32 {
+                android12_category_repr(level)
+            } else {
+                level
+            }
+        }
+        #[cfg(not(target_os = "android"))]
+        level
+    }
+}
+
+impl TryFrom<i32> for Stability {
+    type Error = StatusCode;
+    fn try_from(stability: i32) -> Result<Stability> {
+        use Stability::*;
+
+        // Raw level or android-12 Category: see the `Stability` rustdoc, "Wire encoding".
+        let level = if stability & !0xFF != 0 {
+            (stability >> 24) & 0xFF
+        } else if stability == BINDER_WIRE_FORMAT_VERSION {
+            0
+        } else {
+            stability
+        };
+
+        match level {
+            0 => Ok(Local),
+            0b000011 => Ok(Vendor),
+            0b001100 => Ok(System),
+            0b111111 => Ok(Vintf),
+            _ => {
+                log::error!("Stability value is invalid: {stability:#X}");
+                Err(StatusCode::BadValue)
+            }
+        }
+    }
+}
+
+/// Strong reference to a binder object.
+pub struct SIBinder {
+    inner: Arc<dyn IBinder>,
+}
+
+impl SIBinder {
+    /// Wrap an `Arc<dyn IBinder>` in an `SIBinder`.
+    ///
+    /// Drives `inc_strong` on the inner binder. For native binders this
+    /// advances the local `RefCounter.strong`; for proxies it is a no-op
+    /// (proxy ref-count is owned by the cache-pin model — see
+    /// `proxy::ProxyHandle`).
+    pub fn new(data: Arc<dyn IBinder>) -> Result<Self> {
+        let this = Self { inner: data };
+        this.increase()?;
+        Ok(this)
+    }
+
+    pub(crate) fn from_arc(inner: Arc<dyn IBinder>) -> Self {
+        // After `ProxyHandle::new_acquired` sent `BC_ACQUIRE`; as `new`, since proxies no-op.
+        let this = Self { inner };
+        // Drives a native `RefCounter.strong`; proxies short-circuit to `Ok(())`.
+        this.increase()
+            .expect("inc_strong on existing Arc<dyn IBinder> must not fail");
+        this
+    }
+
+    /// Inner `Arc`, for sidecar tables (`published_natives`) and `Arc::as_ptr` identity checks.
+    pub(crate) fn as_arc(&self) -> &Arc<dyn IBinder> {
+        &self.inner
+    }
+
+    /// Construct a weak reference to this binder.
+    ///
+    /// No kernel command, no trait dispatch.
+    ///
+    /// For proxies, the resulting `WIBinder` is genuinely weak: it
+    /// snapshots `(handle, stability, generation)` for identity
+    /// (`PartialEq`), and holds the handle's cache entry the way a
+    /// `wp<BpBinder>` does (see [`WIBinder`]), but upgrades only while
+    /// some `Arc<ProxyHandle>` for the handle is still alive (kernel
+    /// strong count > 0). Once
+    /// the last user `Strong` drops — sending `BC_RELEASE` and driving
+    /// the kernel strong count to 0 — `upgrade()` returns
+    /// `Err(DeadObject)`, matching Android `wp<BpBinder>::promote()`:
+    /// `BpBinder` is `OBJECT_LIFETIME_WEAK`, so a weak→strong promote
+    /// with strong == 0 is refused by
+    /// `IPCThreadState::attemptIncStrongHandle` (INVALID_OPERATION).
+    /// A re-`BC_ACQUIRE` on a strong-0 handle does NOT yield a
+    /// transactable ref (the kernel rejects the next transaction with
+    /// `BR_FAILED_REPLY`); re-resolving by name through the service
+    /// manager is the correct recovery.
+    ///
+    /// For native binders, the `WIBinder` is a plain
+    /// `sync::Weak<dyn IBinder>` — `upgrade()` succeeds iff some
+    /// `Arc<dyn IBinder>` to the inner binder is still alive.
+    ///
+    /// A proxy's `(handle, generation)` is read from the `ProxyHandle`
+    /// itself, not from the proxy cache. The obituary retires the cache entry
+    /// before dispatching `binder_died`, so a cache lookup answers `None` for
+    /// exactly the binders a death recipient needs to identify. Reading it
+    /// from the proxy makes a downgrade taken after the obituary compare equal
+    /// to one taken before, which lets `binder_died` match `who` against a
+    /// stored `SIBinder`.
+    pub fn downgrade(this: &Self) -> WIBinder {
+        let weak = Arc::downgrade(&this.inner);
+        if let Some(proxy_handle) = this.inner.as_any().downcast_ref::<proxy::ProxyHandle>() {
+            // Identity from the `ProxyHandle`, not the cache (retired before `binder_died`).
+            WIBinder {
+                inner: WIBinderInner::Proxy {
+                    handle: proxy_handle.handle(),
+                    stability: proxy_handle.stability(),
+                    generation: proxy_handle.generation(),
+                    weak,
+                    pin: Arc::clone(proxy_handle.pin()),
+                },
+            }
+        } else {
+            WIBinder {
+                inner: WIBinderInner::Native(weak),
+            }
+        }
+    }
+
+    /// Retrieve the stability level of the underlying binder object.
+    pub fn stability(&self) -> Stability {
+        self.inner.stability()
+    }
+
+    /// Runtime downgrade to [`Stability::System`].
+    ///
+    /// Delegates to [`IBinder::force_downgrade_to_system_stability`]; only
+    /// native binders honor the mutation. Refer to that trait method for the
+    /// parceled-guard contract and the AOSP equivalent.
+    pub fn force_downgrade_to_system_stability(&self) -> Result<()> {
+        self.inner.force_downgrade_to_system_stability()
+    }
+
+    /// Runtime downgrade to [`Stability::Vendor`].
+    /// Delegates to [`IBinder::force_downgrade_to_vendor_stability`].
+    pub fn force_downgrade_to_vendor_stability(&self) -> Result<()> {
+        self.inner.force_downgrade_to_vendor_stability()
+    }
+
+    /// Runtime upgrade/mark as [`Stability::Vintf`].
+    /// Delegates to [`IBinder::mark_vintf`].
+    pub fn mark_vintf(&self) -> Result<()> {
+        self.inner.mark_vintf()
+    }
+
+    /// Has the underlying binder already been serialized
+    /// at least once? Delegates to [`IBinder::was_parceled`].
+    pub fn was_parceled(&self) -> bool {
+        self.inner.was_parceled()
+    }
+
+    pub(crate) fn increase(&self) -> Result<()> {
+        self.inner.inc_strong(self)
+    }
+
+    pub(crate) fn attempt_increase(&self) -> bool {
+        self.inner.attempt_inc_strong()
+    }
+
+    pub(crate) fn decrease(&self) -> Result<()> {
+        self.inner.dec_strong(None)
+    }
+
+    /// Try to convert this Binder object into a trait object for the given
+    /// Binder interface.
+    ///
+    /// If this object does not implement the expected interface, the error
+    /// `StatusCode::BadType` is returned.
+    pub fn into_interface<I: FromIBinder + Interface + ?Sized>(self) -> Result<Strong<I>> {
+        FromIBinder::try_from(self)
+    }
+
+    /// Register a death notification, accepting an `Arc<R>` of the concrete
+    /// recipient type directly so callers need not spell out
+    /// `Arc::downgrade(&(x as Arc<dyn DeathRecipient>))`.
+    ///
+    /// The link stores only a weak reference (see [`IBinder::link_to_death`]):
+    /// **keep `recipient` (your own strong `Arc`) alive for the duration of
+    /// the link, or the notification silently never fires.** Equivalent to
+    /// `self.link_to_death(Arc::downgrade(&recipient))` after unsizing.
+    pub fn link_to_death_arc<R: DeathRecipient + 'static>(&self, recipient: &Arc<R>) -> Result<()> {
+        // Bind `Weak<R>` first so the unsize fires at the call, not on downgrade's arg.
+        let weak: sync::Weak<R> = Arc::downgrade(recipient);
+        self.link_to_death(weak)
+    }
+
+    /// Remove a death notification previously registered with
+    /// [`link_to_death_arc`](Self::link_to_death_arc). Counterpart that takes
+    /// the concrete `Arc<R>` directly.
+    pub fn unlink_to_death_arc<R: DeathRecipient + 'static>(
+        &self,
+        recipient: &Arc<R>,
+    ) -> Result<()> {
+        let weak: sync::Weak<R> = Arc::downgrade(recipient);
+        self.unlink_to_death(weak)
+    }
+
+    /// [`IBinder::add_frozen_state_change_callback`] taking the concrete
+    /// `Arc<C>`. Only a weak reference is stored: keep `callback` alive.
+    pub fn add_frozen_state_change_callback_arc<C: FrozenStateChangeCallback + 'static>(
+        &self,
+        callback: &Arc<C>,
+    ) -> Result<()> {
+        let weak: sync::Weak<C> = Arc::downgrade(callback);
+        self.add_frozen_state_change_callback(weak)
+    }
+
+    /// [`IBinder::remove_frozen_state_change_callback`] taking the concrete `Arc<C>`.
+    pub fn remove_frozen_state_change_callback_arc<C: FrozenStateChangeCallback + 'static>(
+        &self,
+        callback: &Arc<C>,
+    ) -> Result<()> {
+        let weak: sync::Weak<C> = Arc::downgrade(callback);
+        self.remove_frozen_state_change_callback(weak)
+    }
+}
+
+impl Debug for SIBinder {
+    fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
+        f.debug_struct("SIBinder")
+            .field("descriptor", &self.descriptor())
+            .field("ptr", &Arc::as_ptr(&self.inner))
+            .finish()
+    }
+}
+
+impl Clone for SIBinder {
+    fn clone(&self) -> Self {
+        Self::from_arc(Arc::clone(&self.inner))
+    }
+}
+
+impl Drop for SIBinder {
+    fn drop(&mut self) {
+        self.decrease()
+            .map_err(|err| {
+                log::error!("Error in SIBinder::drop() is {err:?}");
+            })
+            .ok();
+    }
+}
+
+impl Deref for SIBinder {
+    type Target = dyn IBinder;
+    fn deref(&self) -> &Self::Target {
+        self.inner.deref()
+    }
+}
+
+impl PartialEq for SIBinder {
+    fn eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.inner, &other.inner)
+    }
+}
+
+impl Eq for SIBinder {}
+
+/// Weak reference to a binder object.
+///
+/// `upgrade()` is fallible. The conditions under which it succeeds
+/// depend on whether the underlying binder is a proxy (remote) or a
+/// native (local) one:
+///
+/// **Proxy.** `upgrade()` is genuinely weak: it succeeds iff a proxy of the
+/// same `(handle, generation)` is alive, which keeps the kernel strong count
+/// above 0, and it never sends a kernel command.
+///   - If the `Arc<ProxyHandle>` this `WIBinder` was downgraded from is
+///     still alive, `upgrade()` returns it.
+///   - Otherwise, if a fresh wire delivery of the handle has since revived
+///     the proxy-cache entry this `WIBinder` keeps, `upgrade()` returns that
+///     revived proxy.
+///   - Otherwise (every user-side `Strong` has been dropped, so the
+///     last `BC_RELEASE` drove the kernel strong count to 0)
+///     `upgrade()` returns `Err(DeadObject)`. It does **not** try to
+///     re-acquire the handle: the binder driver refuses a `BC_ACQUIRE` on a
+///     strong-0 reference ("tried to use weak ref as strong ref",
+///     `binder_get_ref_olocked`) without an errno, so the next transaction
+///     fails with `BR_FAILED_REPLY`. The Rust binder driver accepts it; this
+///     follows the C driver and AOSP. Obtaining a fresh,
+///     transactable proxy requires re-resolving the handle through a
+///     new wire delivery (e.g. by name through the service manager).
+///
+/// This matches Android `wp<BpBinder>::promote()`: `BpBinder` is
+/// `OBJECT_LIFETIME_WEAK`, so a weak→strong promote while strong == 0
+/// routes through `IPCThreadState::attemptIncStrongHandle`, which
+/// returns `INVALID_OPERATION` and refuses the promote — AOSP never
+/// revives a strong ref from weak-only on a binder handle. A re-delivery
+/// revives the same `BpBinder` (`getStrongProxyForHandle`'s `force_set`),
+/// after which `promote()` succeeds; the second case above is that.
+///
+/// A proxy `WIBinder` keeps the handle's proxy-cache entry and its kernel
+/// weak ref (`BC_INCREFS`), as a `wp<BpBinder>` keeps the `BpBinder` and
+/// its cache slot (`BpBinder.cpp:280`, `:833-834`). While it lives, the
+/// handle number cannot be given to another node, and a re-resolve of the
+/// handle revives the same `(handle, generation)`, so it compares equal to
+/// the new proxy. Dropping the last such reference once no proxy is left
+/// queues `BC_DECREFS`. After the remote dies the entry is retired, so a
+/// later delivery of the handle is a new generation this `WIBinder` does not
+/// upgrade to (AOSP would hand back the dead `BpBinder`, whose calls fail
+/// with `DEAD_OBJECT`).
+///
+/// **Native.** `upgrade()` succeeds iff some `Arc<dyn IBinder>` to the
+/// inner binder is still alive in the process. This is plain
+/// `sync::Weak::upgrade` semantics — natives have no process-wide
+/// cache, so when the last strong is dropped, the binder is gone.
+pub struct WIBinder {
+    inner: WIBinderInner,
+}
+
+pub(crate) enum WIBinderInner {
+    /// `weak` upgrades; `(handle, generation)` is the identity, stable across a re-resolve.
+    Proxy {
+        handle: u32,
+        stability: Stability,
+        generation: u64,
+        weak: sync::Weak<dyn IBinder>,
+        /// Keeps the cache entry and its `BC_INCREFS`, as a `wp<BpBinder>` keeps the `BpBinder`.
+        pin: Arc<crate::process_state::HandlePin>,
+    },
+    /// Native weak reference. Plain `sync::Weak`.
+    Native(sync::Weak<dyn IBinder>),
+}
+
+impl WIBinder {
+    /// Upgrade to a strong reference, or `Err(DeadObject)` once the binder is gone.
+    ///
+    /// A native weak reference upgrades while some `Arc<dyn IBinder>` to the
+    /// binder is alive.
+    ///
+    /// A proxy weak reference is genuinely weak: it upgrades only while a
+    /// proxy of its `(handle, generation)` is alive, which keeps the kernel
+    /// strong count above 0 — the `Arc<ProxyHandle>` it was downgraded from,
+    /// or the proxy a later wire delivery of the handle revived on the cache
+    /// entry this `WIBinder` keeps. This mirrors Android
+    /// `wp<BpBinder>::promote()`: `BpBinder` is `OBJECT_LIFETIME_WEAK`, so
+    /// promoting a weak reference with strong == 0 goes through
+    /// `IPCThreadState::attemptIncStrongHandle`, which returns
+    /// `INVALID_OPERATION` and refuses the promote (`RefBase.cpp:627-703`,
+    /// `BpBinder.cpp:267`), while a `BpBinder` that `getStrongProxyForHandle`
+    /// revived with `force_set` (`ProcessState.cpp:398`) promotes again.
+    ///
+    /// A strong-0 handle is never re-acquired. Once the last user `Strong`
+    /// drops and its `BC_RELEASE` drives the kernel strong count to 0, the
+    /// binder driver refuses a re-`BC_ACQUIRE` (`binder_get_ref_olocked`
+    /// with `need_strong_ref`) and the next transaction fails with
+    /// `BR_FAILED_REPLY`: the `BC_INCREFS` cache pin this `WIBinder` holds
+    /// keeps the `binder_ref` slot from being freed but does not make a
+    /// strong-0 reference transactable. A transactable strong reference
+    /// requires a fresh wire delivery of the handle, e.g. re-resolving the
+    /// service by name through the service manager.
+    pub fn upgrade(&self) -> Result<SIBinder> {
+        match &self.inner {
+            WIBinderInner::Native(weak) => weak
+                .upgrade()
+                .map(SIBinder::from_arc)
+                .ok_or(StatusCode::DeadObject),
+            WIBinderInner::Proxy { weak, pin, .. } => {
+                // Never re-acquires a strong-0 handle; only a proxy revived by a delivery (rustdoc).
+                weak.upgrade()
+                    .or_else(|| {
+                        crate::process_state::ProcessState::live_proxy_for_pin(pin)
+                            .map(|arc| arc as Arc<dyn IBinder>)
+                    })
+                    .map(SIBinder::from_arc)
+                    .ok_or(StatusCode::DeadObject)
+            }
+        }
+    }
+}
+
+impl Debug for WIBinder {
+    fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
+        match &self.inner {
+            WIBinderInner::Native(weak) => f
+                .debug_struct("WIBinder::Native")
+                .field("strong_count", &weak.strong_count())
+                .field("weak_count", &weak.weak_count())
+                .finish(),
+            WIBinderInner::Proxy {
+                handle,
+                stability,
+                generation,
+                weak,
+                ..
+            } => f
+                .debug_struct("WIBinder::Proxy")
+                .field("handle", handle)
+                .field("stability", stability)
+                .field("generation", generation)
+                // Not the revived proxy's count, which `upgrade()` also reaches; reading it locks.
+                .field("downgraded_from_strong_count", &weak.strong_count())
+                .finish(),
+        }
+    }
+}
+
+impl Clone for WIBinder {
+    fn clone(&self) -> Self {
+        let inner = match &self.inner {
+            WIBinderInner::Native(weak) => WIBinderInner::Native(sync::Weak::clone(weak)),
+            WIBinderInner::Proxy {
+                handle,
+                stability,
+                generation,
+                weak,
+                pin,
+            } => WIBinderInner::Proxy {
+                handle: *handle,
+                stability: *stability,
+                generation: *generation,
+                weak: sync::Weak::clone(weak),
+                pin: Arc::clone(pin),
+            },
+        };
+        Self { inner }
+    }
+}
+
+impl PartialEq for WIBinder {
+    /// Equality matches Android `BpBinder` identity. For proxies, two
+    /// `WIBinder`s are equal iff they refer to the same kernel
+    /// binder_node — i.e. same `(handle, generation)` pair. This holds
+    /// even across resurrection (the new `Arc<ProxyHandle>` is a fresh
+    /// allocation, so `sync::Weak::ptr_eq` would say "different", but
+    /// they are conceptually the same binder). For natives, equality
+    /// is `sync::Weak::ptr_eq` on the inner Arc allocation.
+    fn eq(&self, other: &Self) -> bool {
+        match (&self.inner, &other.inner) {
+            (WIBinderInner::Native(a), WIBinderInner::Native(b)) => sync::Weak::ptr_eq(a, b),
+            (
+                WIBinderInner::Proxy {
+                    handle: ha,
+                    generation: ga,
+                    ..
+                },
+                WIBinderInner::Proxy {
+                    handle: hb,
+                    generation: gb,
+                    ..
+                },
+            ) => ha == hb && ga == gb,
+            _ => false,
+        }
+    }
+}
+
+/// Does this weak reference name the same binder as `other`?
+///
+/// This is the comparison a [`DeathRecipient`] needs: `binder_died` hands
+/// out a `WIBinder`, and the recipient holds `SIBinder`s. Writing it as
+/// `*who == service.binder` avoids the trap of downgrading the stored
+/// strong reference and comparing two `WIBinder`s — correct here, but only
+/// because [`SIBinder::downgrade`] takes the proxy's identity from the
+/// proxy rather than from the (already-retired) cache.
+impl PartialEq<SIBinder> for WIBinder {
+    fn eq(&self, other: &SIBinder) -> bool {
+        *self == SIBinder::downgrade(other)
+    }
+}
+
+/// Mirror of [`PartialEq<SIBinder> for WIBinder`] so the operands can be
+/// written in either order.
+impl PartialEq<WIBinder> for SIBinder {
+    fn eq(&self, other: &WIBinder) -> bool {
+        SIBinder::downgrade(self) == *other
+    }
+}
+
+/// Strong reference to a binder object
+pub struct Strong<I: FromIBinder + ?Sized>(Box<I>);
+
+impl<I: FromIBinder + ?Sized> Strong<I> {
+    /// Create a new strong reference to the provided binder object
+    pub fn new(binder: Box<I>) -> Self {
+        Self(binder)
+    }
+
+    /// Construct a new weak reference to this binder
+    pub fn downgrade(this: &Strong<I>) -> Weak<I> {
+        Weak::new(this)
+    }
+
+    /// Convert this synchronous binder handle into an asynchronous one.
+    ///
+    /// # Panics
+    ///
+    /// When the handle is a **local** binder that was published as a
+    /// sync-only service (`Bn*::new_binder` rather than
+    /// `new_async_binder`): its adapter has no async view, and the cast
+    /// is refused as `BadType`. Use [`try_into_async`](Self::try_into_async)
+    /// where that is a possibility (a service looked up from the same
+    /// process, for instance). Remote proxies always convert.
+    pub fn into_async<P>(self) -> Strong<<I as ToAsyncInterface<P>>::Target>
+    where
+        I: ToAsyncInterface<P>,
+    {
+        self.try_into_async()
+            .expect("into_async on a sync-only local service; use try_into_async")
+    }
+
+    /// Fallible [`into_async`](Self::into_async): `Err(BadType)` when the
+    /// binder is a sync-only local service that cannot back the async
+    /// view, `Err` for any other cast failure.
+    pub fn try_into_async<P>(self) -> Result<Strong<<I as ToAsyncInterface<P>>::Target>>
+    where
+        I: ToAsyncInterface<P>,
+    {
+        FromIBinder::try_from(self.0.as_binder())
+    }
+
+    /// Convert this asynchronous binder handle into a synchronous one.
+    pub fn into_sync(self) -> Strong<<I as ToSyncInterface>::Target>
+    where
+        I: ToSyncInterface,
+    {
+        // ToSyncInterface guarantees the binder is also valid for the target type.
+        FromIBinder::try_from(self.0.as_binder())
+            .expect("ToSyncInterface guarantees binder compatibility")
+    }
+
+    /// Register a death notification on the underlying binder, taking the
+    /// concrete `Arc<R>` recipient directly. Convenience for
+    /// `self.as_binder().link_to_death_arc(recipient)`; see
+    /// [`SIBinder::link_to_death_arc`] for the weak-reference caveat.
+    pub fn link_to_death_arc<R: DeathRecipient + 'static>(&self, recipient: &Arc<R>) -> Result<()> {
+        self.0.as_binder().link_to_death_arc(recipient)
+    }
+
+    /// Remove a death notification registered with
+    /// [`link_to_death_arc`](Self::link_to_death_arc).
+    pub fn unlink_to_death_arc<R: DeathRecipient + 'static>(
+        &self,
+        recipient: &Arc<R>,
+    ) -> Result<()> {
+        self.0.as_binder().unlink_to_death_arc(recipient)
+    }
+}
+
+/// Drop the interface type and recover the underlying [`SIBinder`].
+///
+/// Lets APIs that take a raw binder — e.g. [`crate::hub::add_service`] — accept
+/// a `Strong<dyn IFoo>` directly via `impl Into<SIBinder>`, so callers need not
+/// spell out `.as_binder()`. `&Strong<I>` is also accepted so the handle can be
+/// reused afterwards.
+impl<I: FromIBinder + ?Sized> From<Strong<I>> for SIBinder {
+    fn from(strong: Strong<I>) -> SIBinder {
+        strong.as_binder()
+    }
+}
+
+impl<I: FromIBinder + ?Sized> From<&Strong<I>> for SIBinder {
+    fn from(strong: &Strong<I>) -> SIBinder {
+        strong.as_binder()
+    }
+}
+
+impl<I: FromIBinder + ?Sized> TryFrom<SIBinder> for Strong<I> {
+    type Error = StatusCode;
+
+    /// Casts an [`SIBinder`] to a typed [`Strong<I>`] — the fallible inverse
+    /// of converting a [`Strong<I>`](Strong) back into an [`SIBinder`].
+    ///
+    /// Equivalent to [`SIBinder::into_interface`] and to the
+    /// [`FromIBinder::try_from`] trait method; provided so the idiomatic
+    /// `Strong::<dyn IFoo>::try_from(binder)` spelling resolves. Returns
+    /// [`StatusCode::BadType`] when the binder does not implement `I`.
+    fn try_from(ibinder: SIBinder) -> Result<Strong<I>> {
+        FromIBinder::try_from(ibinder)
+    }
+}
+
+impl<I: FromIBinder + ?Sized> Clone for Strong<I> {
+    fn clone(&self) -> Self {
+        // A held strong reference always casts back to its own interface type.
+        FromIBinder::try_from(self.0.as_binder())
+            .expect("Failed to clone Strong<I>: existing strong reference guarantees valid binder")
+    }
+}
+
+impl<I: FromIBinder + ?Sized> Borrow<I> for Strong<I> {
+    fn borrow(&self) -> &I {
+        &self.0
+    }
+}
+
+impl<I: FromIBinder + ?Sized> AsRef<I> for Strong<I> {
+    fn as_ref(&self) -> &I {
+        &self.0
+    }
+}
+
+impl<I: FromIBinder + ?Sized> Deref for Strong<I> {
+    type Target = I;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+/// A typed handle is itself an [`Interface`], forwarding to the binder it
+/// holds.
+///
+/// This is what lets a **gateway** — a process that re-publishes a service it
+/// reached over one transport onto another — be one line. `Bn*::new_binder`
+/// accepts any `T: IFoo + Send + Sync + 'static`, and the AIDL generator emits
+/// `impl IFoo for Strong<dyn IFoo>` (every method forwarding through `Deref`),
+/// so `BnFoo::new_binder(proxy)` wraps a remote proxy in a *local* binder that
+/// this process owns and can publish anywhere:
+///
+/// ```ignore
+/// // B: reached C over the kernel; re-publishes it on a socket.
+/// let upstream: Strong<dyn IFoo> = rsbinder::connect(Uri::kernel().with_service("my.foo"))?;
+/// rsbinder::serve(Endpoint::unix("/tmp/gw.sock"))?
+///     .add("foo", BnFoo::new_binder(upstream))?
+///     .run()?;
+/// ```
+///
+/// The `Interface` half has to live here rather than beside the generated
+/// `impl`: `Strong` is an rsbinder type, so a user crate writing
+/// `impl Interface for Strong<dyn IFoo>` violates the orphan rule (E0117 —
+/// `Strong` is not `#[fundamental]`). The generated interface `impl` is fine
+/// there because `IFoo` is local to the user's crate.
+///
+/// Note `as_binder` on a handle wrapping a **proxy** returns that *remote*
+/// binder. Serializing the handle directly therefore hands the proxy to the
+/// parcel, which the stack-boundary check refuses — wrapping it in a `Bn*` is
+/// exactly what makes it publishable. See the book's
+/// [cross-transport chapter](https://hiking90.github.io/rsbinder/cross-transport-services.html).
+///
+/// `dump` forwards to the handle's target, but a *proxy* target has no
+/// `Interface::dump` of its own (remote dump is
+/// [`ProxyHandle::dump`](crate::ProxyHandle::dump), a different signature — an
+/// fd, not a writer), so it takes the trait's no-op default: a dump sent to a
+/// gateway succeeds and returns nothing. Dump the upstream service directly.
+impl<I: FromIBinder + ?Sized> Interface for Strong<I> {
+    fn as_binder(&self) -> SIBinder {
+        (**self).as_binder()
+    }
+
+    fn dump(&self, writer: &mut dyn std::io::Write, args: &[String]) -> Result<()> {
+        (**self).dump(writer, args)
+    }
+}
+
+impl<I: FromIBinder + Debug + ?Sized> Debug for Strong<I> {
+    fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
+        Debug::fmt(&**self, f)
+    }
+}
+
+impl<I: FromIBinder + ?Sized> PartialEq for Strong<I> {
+    fn eq(&self, other: &Self) -> bool {
+        self.0.as_binder().eq(&other.0.as_binder())
+    }
+}
+
+impl<I: FromIBinder + ?Sized> Eq for Strong<I> {}
+
+/// Weak reference to a binder object
+#[derive(Debug)]
+pub struct Weak<I: FromIBinder + ?Sized> {
+    weak_binder: WIBinder,
+    interface_type: PhantomData<I>,
+}
+
+impl<I: FromIBinder + ?Sized> Weak<I> {
+    /// Construct a new weak reference from a strong reference
+    fn new(binder: &Strong<I>) -> Self {
+        let weak_binder = SIBinder::downgrade(&binder.as_binder());
+        Weak {
+            weak_binder,
+            interface_type: PhantomData,
+        }
+    }
+
+    /// Upgrade this weak reference to a strong reference if the binder object
+    /// is still alive
+    pub fn upgrade(&self) -> Result<Strong<I>> {
+        self.weak_binder.upgrade().and_then(FromIBinder::try_from)
+    }
+}
+
+impl<I: FromIBinder + ?Sized> Clone for Weak<I> {
+    fn clone(&self) -> Self {
+        Self {
+            weak_binder: self.weak_binder.clone(),
+            interface_type: PhantomData,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    // use crate::proxy::ProxyHandle;
+    use super::*;
+
+    /// Driver-free native `IBinder`; no-op ref counts, so tests see bare `Arc` semantics.
+    struct MockBinder;
+
+    impl IBinder for MockBinder {
+        fn link_to_death(&self, _: sync::Weak<dyn DeathRecipient>) -> Result<()> {
+            Err(StatusCode::InvalidOperation)
+        }
+        fn unlink_to_death(&self, _: sync::Weak<dyn DeathRecipient>) -> Result<()> {
+            Err(StatusCode::InvalidOperation)
+        }
+        fn ping_binder(&self) -> Result<()> {
+            Ok(())
+        }
+        fn as_any(&self) -> &dyn std::any::Any {
+            self
+        }
+        fn as_transactable(&self) -> Option<&dyn Transactable> {
+            None
+        }
+        fn descriptor(&self) -> &str {
+            "rsbinder.test.MockBinder"
+        }
+        fn is_remote(&self) -> bool {
+            false
+        }
+        fn inc_strong(&self, _: &SIBinder) -> Result<()> {
+            Ok(())
+        }
+        fn attempt_inc_strong(&self) -> bool {
+            true
+        }
+        fn dec_strong(&self, _: Option<ManuallyDrop<SIBinder>>) -> Result<()> {
+            Ok(())
+        }
+        fn inc_weak(&self, _: &WIBinder) -> Result<()> {
+            Ok(())
+        }
+        fn dec_weak(&self) -> Result<()> {
+            Ok(())
+        }
+    }
+
+    struct NoopFrozen;
+    impl FrozenStateChangeCallback for NoopFrozen {
+        fn on_state_changed(&self, _: &WIBinder, _: FrozenState) {}
+    }
+
+    /// Anything but a kernel proxy refuses freeze callbacks and records nothing (AOSP
+    /// `INVALID_OPERATION` for a local binder; RPC proxies take the same default).
+    #[test]
+    fn non_kernel_binders_refuse_freeze_callbacks() {
+        let binder = SIBinder::new(Arc::new(MockBinder)).expect("SIBinder::new");
+        let callback = Arc::new(NoopFrozen);
+        assert_eq!(
+            binder.add_frozen_state_change_callback_arc(&callback),
+            Err(StatusCode::InvalidOperation)
+        );
+        assert_eq!(
+            binder.remove_frozen_state_change_callback_arc(&callback),
+            Err(StatusCode::InvalidOperation)
+        );
+        assert_eq!(Arc::weak_count(&callback), 0, "no registration kept a weak");
+    }
+
+    #[test]
+    fn frozen_state_from_the_kernel_flag() {
+        assert_eq!(FrozenState::from(true), FrozenState::Frozen);
+        assert_eq!(FrozenState::from(false), FrozenState::Unfrozen);
+    }
+
+    /// A native `WIBinder::upgrade()` returns `DeadObject` once the last `Arc` is dropped.
+    #[test]
+    fn test_wibinder_upgrade_after_strong_drop_returns_dead_object() {
+        let strong = SIBinder::new(Arc::new(MockBinder)).expect("SIBinder::new");
+        let weak = SIBinder::downgrade(&strong);
+
+        // While `strong` is alive, upgrade yields the same allocation.
+        let upgraded = weak.upgrade().expect("upgrade while alive");
+        assert!(Arc::ptr_eq(&strong.inner, &upgraded.inner));
+        drop(upgraded);
+
+        // Dropping the only strong holder makes upgrade fail with DeadObject.
+        drop(strong);
+        match weak.upgrade() {
+            Err(StatusCode::DeadObject) => {}
+            Err(other) => panic!("expected DeadObject after Arc drop, got {other:?}"),
+            Ok(_) => panic!(
+                "expected DeadObject after Arc drop, but upgrade succeeded \
+                 (regression: the WIBinderInner::Native arm of WIBinder::upgrade \
+                 is no longer truly weak — the Proxy arm is not covered here, \
+                 MockBinder never downcasts to a ProxyHandle)"
+            ),
+        }
+    }
+
+    /// Two `WIBinder` clones stay equal after the strong holder is gone, and neither upgrades.
+    #[test]
+    fn test_wibinder_clone_and_ptr_eq_after_drop() {
+        let strong = SIBinder::new(Arc::new(MockBinder)).expect("SIBinder::new");
+        let weak1 = SIBinder::downgrade(&strong);
+        let weak2 = weak1.clone();
+
+        // Two clones of the same WIBinder must compare equal via ptr_eq.
+        assert_eq!(weak1, weak2);
+
+        drop(strong);
+        // Weak::ptr_eq compares stable allocation addresses, so the clones stay equal.
+        assert_eq!(weak1, weak2);
+        // ...but neither upgrades.
+        assert!(matches!(weak1.upgrade(), Err(StatusCode::DeadObject)));
+        assert!(matches!(weak2.upgrade(), Err(StatusCode::DeadObject)));
+    }
+
+    #[test]
+    fn test_b_pack_chars() {
+        assert_eq!(b_pack_chars('_', 'P', 'N', 'G'), PING_TRANSACTION);
+        assert_eq!(b_pack_chars('_', 'D', 'M', 'P'), DUMP_TRANSACTION);
+        assert_eq!(b_pack_chars('_', 'C', 'M', 'D'), SHELL_COMMAND_TRANSACTION);
+        assert_eq!(b_pack_chars('_', 'N', 'T', 'F'), INTERFACE_TRANSACTION);
+        assert_eq!(b_pack_chars('_', 'S', 'P', 'R'), SYSPROPS_TRANSACTION);
+        assert_eq!(b_pack_chars('_', 'E', 'X', 'T'), EXTENSION_TRANSACTION);
+        assert_eq!(b_pack_chars('_', 'P', 'I', 'D'), DEBUG_PID_TRANSACTION);
+        assert_eq!(b_pack_chars('_', 'R', 'P', 'C'), SET_RPC_CLIENT_TRANSACTION);
+        assert_eq!(
+            b_pack_chars('_', 'S', 'R', 'D'),
+            START_RECORDING_TRANSACTION
+        );
+        assert_eq!(b_pack_chars('_', 'E', 'R', 'D'), STOP_RECORDING_TRANSACTION);
+        assert_eq!(b_pack_chars('_', 'T', 'W', 'T'), TWEET_TRANSACTION);
+        assert_eq!(b_pack_chars('_', 'L', 'I', 'K'), LIKE_TRANSACTION);
+    }
+}
+
+#[cfg(test)]
+mod stability_tests {
+    use super::*;
+
+    // === Wire value tests ===
+    #[test]
+    fn test_stability_wire_values() {
+        // SDK 31/32 devices wire `(level << 24) | 1`, other targets the raw level.
+        for (s, level) in [
+            (Stability::Local, 0),
+            (Stability::Vendor, 0b000011),
+            (Stability::System, 0b001100),
+            (Stability::Vintf, 0b111111),
+        ] {
+            let wire: i32 = s.into();
+            #[cfg(target_os = "android")]
+            let expected = {
+                let sdk = crate::get_android_sdk_version();
+                if sdk == 31 || sdk == 32 {
+                    android12_category_repr(level)
+                } else {
+                    level
+                }
+            };
+            #[cfg(not(target_os = "android"))]
+            let expected = level;
+            assert_eq!(wire, expected, "wire encoding for {s:?}");
+            assert_eq!(
+                Stability::try_from(wire).unwrap(),
+                s,
+                "round-trip for {s:?}"
+            );
+        }
+    }
+
+    // === TryFrom round-trip tests ===
+    #[test]
+    fn test_stability_roundtrip() {
+        for s in [
+            Stability::Local,
+            Stability::Vendor,
+            Stability::System,
+            Stability::Vintf,
+        ] {
+            let wire: i32 = s.into();
+            assert_eq!(Stability::try_from(wire).unwrap(), s);
+        }
+    }
+
+    #[test]
+    fn test_stability_category_format() {
+        // (level << 24) | 1, byte-exact to AOSP-12.0.0_r34 `Category::currentFromLevel`.
+        assert_eq!(super::android12_category_repr(0), 0x0000_0001);
+        assert_eq!(super::android12_category_repr(0b000011), 0x0300_0001);
+        assert_eq!(super::android12_category_repr(0b001100), 0x0c00_0001);
+        assert_eq!(super::android12_category_repr(0b111111), 0x3f00_0001);
+
+        // Every Category repr decodes, including Local/UNDECLARED (0x0000_0001).
+        assert_eq!(Stability::try_from(0x0000_0001).unwrap(), Stability::Local);
+        assert_eq!(Stability::try_from(0x0300_0001).unwrap(), Stability::Vendor);
+        assert_eq!(Stability::try_from(0x0c00_0001).unwrap(), Stability::System);
+        assert_eq!(Stability::try_from(0x3f00_0001).unwrap(), Stability::Vintf);
+
+        // Any version byte on a nonzero-level Category decodes by level (AOSP reads only level).
+        assert_eq!(
+            Stability::try_from((0b001100 << 24) | 12).unwrap(),
+            Stability::System
+        );
+
+        // Raw-level encoding (android-11 / android-13+) still decodes.
+        assert_eq!(Stability::try_from(0).unwrap(), Stability::Local);
+        assert_eq!(Stability::try_from(0b000011).unwrap(), Stability::Vendor);
+        assert_eq!(Stability::try_from(0b001100).unwrap(), Stability::System);
+        assert_eq!(Stability::try_from(0b111111).unwrap(), Stability::Vintf);
+    }
+
+    #[test]
+    fn test_stability_invalid_value() {
+        assert_eq!(Stability::try_from(0x7F).unwrap_err(), StatusCode::BadValue);
+        // A low byte that is neither a raw level nor the android-12 version tag is rejected.
+        assert_eq!(Stability::try_from(0x05).unwrap_err(), StatusCode::BadValue);
+        // 0x01 is the android-12 Local/UNDECLARED Category repr: Local, not BadValue.
+        assert_eq!(Stability::try_from(0x01).unwrap(), Stability::Local);
+    }
+
+    // === Bitmask verification tests ===
+    #[test]
+    fn test_stability_includes() {
+        // Local is included by all stability levels
+        assert!(Stability::Local.includes(Stability::Local));
+        assert!(Stability::Vendor.includes(Stability::Local));
+        assert!(Stability::System.includes(Stability::Local));
+        assert!(Stability::Vintf.includes(Stability::Local));
+
+        // Vendor and System are independent domains
+        assert!(!Stability::Vendor.includes(Stability::System));
+        assert!(!Stability::System.includes(Stability::Vendor));
+
+        // Vintf includes all levels
+        assert!(Stability::Vintf.includes(Stability::Vendor));
+        assert!(Stability::Vintf.includes(Stability::System));
+        assert!(Stability::Vintf.includes(Stability::Vintf));
+
+        // Self-inclusion
+        assert!(Stability::Vendor.includes(Stability::Vendor));
+        assert!(Stability::System.includes(Stability::System));
+    }
+}

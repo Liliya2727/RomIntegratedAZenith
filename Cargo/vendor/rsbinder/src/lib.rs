@@ -1,0 +1,482 @@
+// Copyright 2022 Jeff Kim <hiking90@gmail.com>
+// SPDX-License-Identifier: Apache-2.0
+
+//! A pure Rust implementation of Android Binder IPC mechanism.
+//!
+//! This library provides a complete implementation of the Android Binder protocol
+//! for inter-process communication (IPC) on Linux and Android systems. It enables
+//! services to communicate across process boundaries with type safety and efficiency.
+//!
+//! # Core Components
+//!
+//! - **Binder**: Core binder object and transaction handling
+//! - **Parcel**: Serialization/deserialization for IPC data
+//! - **Proxy**: Client-side interface for remote services
+//! - **Native**: Server-side service implementation utilities
+//! - **ProcessState**: Process-level binder state management
+//! - **ServiceManager**: Service discovery and registration (the [`hub`] module)
+//! - **RPC transport**: binder-over-socket (`rpc` module, behind the `rpc`
+//!   feature) — a separate stack from the kernel binder path
+//! - **Entry API**: [`serve`] / [`connect`] — publish and look up services
+//!   at one [`Uri`], whose endpoint picks the transport (kernel binder or RPC)
+//! - **Shared memory**: [`shared_memory`] — payloads too big to copy through
+//!   a transaction (AOSP `IMemory` wire)
+//! - **Interface macros**: `#[rsbinder::interface]` (behind the `macros`
+//!   feature) — an interface as a Rust trait instead of an `.aidl` file
+//!
+//! # Wire byte order
+//!
+//! **The data-parcel wire is little-endian on every host.** A parcel
+//! written on one machine can be read on another, whatever either CPU's
+//! byte order is, and the bytes are identical to what a peer running
+//! Android's libbinder would send for the same value.
+//!
+//! On a little-endian host — every Android target and almost every Linux
+//! one — this costs nothing: the encoding is the memory layout, as it
+//! always was. A big-endian host pays a byte swap and gets a parcel its
+//! peers can actually read.
+//!
+//! Not every byte in a parcel is wire, and the distinction matters if you
+//! are reading the source:
+//!
+//! | Layer | What | Byte order |
+//! |---|---|---|
+//! | Data parcel | scalars, arrays, `String`, the object-free payload | **little-endian** |
+//! | Kernel command stream | the `BC_*`/`BR_*` ioctl buffer | host-native |
+//! | UAPI structs | `flat_binder_object`, `binder_transaction_data` | host-native |
+//!
+//! The lower two go to the kernel driver, which parses them with native
+//! loads; byte-swapping those would break the driver interface. So on a
+//! big-endian host a *kernel* parcel carrying a binder is a mixture —
+//! little-endian scalars around a native object header. That is correct:
+//! the scalars cross to a peer, the object header does not.
+//!
+//! ## Support tiers
+//!
+//! | Path | Little-endian | Big-endian |
+//! |---|---|---|
+//! | RPC (binder-over-socket) | supported, CI-verified | supported, verified under qemu-user s390x |
+//! | Kernel binder | supported, CI-verified | structurally correct but **unverified** — no big-endian binderfs exists to test on |
+//!
+//! # Data serialization
+//!
+//! An AIDL interface is already a schema, and the code generated from it
+//! is already a complete serializer. `to_bytes` and `from_bytes` let you
+//! use it for storage rather than only for a transaction:
+//!
+//! ```no_run
+//! # fn main() {}
+//! # #[cfg(feature = "macros")]
+//! # mod example {
+//! # #[derive(rsbinder::Parcelable, Default, Debug, Clone)]
+//! # struct Settings { volume: i32, name: String }
+//! # fn run() -> rsbinder::Result<()> {
+//! let settings = Settings { volume: 7, name: "quiet".into() };
+//! std::fs::write("settings.bin", rsbinder::to_bytes(&settings)?)?;
+//!
+//! let restored: Settings = rsbinder::from_bytes(&std::fs::read("settings.bin")?)?;
+//! # Ok(())
+//! # }
+//! # }
+//! ```
+//!
+//! Binders and file descriptors are refused rather than encoded — neither
+//! means anything outside the process that made it. `to_bytes`'s own docs
+//! cover what makes a stored type survive its schema changing.
+//!
+//! # Feature flags
+//!
+//! - `tokio` *(default)* — async/await support on the Tokio runtime
+//!   (implies `async`). It enables only `tokio/rt`, `rt-multi-thread` and
+//!   `sync`; declare `macros`, `time`, `net` and the rest on your own `tokio`
+//!   dependency.
+//! - `async` — generic async-trait support, without committing to a
+//!   specific runtime.
+//! - `rpc` — master switch for the RPC transport (binder-over-socket), a
+//!   separate stack from the kernel binder path. Off by default; default
+//!   and `--no-default-features` builds carry zero RPC/networking cost.
+//! - `rpc-tcp-debug` — plaintext TCP backend (implies `rpc`). Debug and
+//!   interop bring-up **only**, never production — use `rpc-tls` for real
+//!   networks.
+//! - `rpc-vsock` — vsock backend for host↔VM channels (implies `rpc`;
+//!   Linux and Android targets only).
+//! - `rpc-tls` — TLS backend over rustls (implies `rpc`). rsbinder never
+//!   invents crypto; the caller supplies the `rustls` configuration.
+//! - `macros` — `#[rsbinder::interface]`, `#[derive(Parcelable)]`,
+//!   `#[derive(BinderEnum)]` and `#[derive(ServiceSpecificError)]`: declare an interface as a Rust trait, with no
+//!   `.aidl` file and no `build.rs`. The emitted code is byte-for-byte what
+//!   `.aidl` produces. Off by default: it pulls the AIDL compiler in as a
+//!   proc-macro dependency.
+//! - `android_10` … `android_16`, plus the `android_*_plus` ranges (e.g.
+//!   `android_11_plus`) — select which Android service-manager protocol
+//!   versions to support. Android 10 uses the legacy C service-manager
+//!   protocol. Android 17 needs no dedicated flag: its service-manager wire
+//!   format is identical to Android 16's, so `android_16` serves it.
+//!   Android 15 has **two** protocols and one SDK version —
+//!   `android-15.0.0_r6` renumbered the interface — so `android_14` serves
+//!   its initial release and `android_15` serves `r6` and later; enable both
+//!   to cover every Android 15 device. The choice is measured at runtime,
+//!   not derived from the SDK version.
+//! - `fuzzing`, `test-util` — expose entry points that exist for a fuzz
+//!   target or a test to reach past the API. Not part of the supported
+//!   surface, and absent from a normal build; a consumer has no reason to
+//!   enable either.
+//!
+//! # Basic Usage
+//!
+//! This library works with AIDL (Android Interface Definition Language) files to generate
+//! type-safe Rust bindings for IPC services.
+//!
+//! **[`serve`] and [`connect`] are the way in.** One [`Uri`] picks the
+//! transport — [`Uri::kernel`] for kernel binder, [`Endpoint::unix`],
+//! [`Endpoint::vsock`] or [`Endpoint::tls`] for RPC, or the same parsed
+//! from a string such as `unix:///run/svc.sock#name` — and the service and
+//! client code either side of it is identical. The lower-level route
+//! ([`ProcessState`] plus the [`hub`] service-manager calls) stays
+//! available and is what the entry API is built on; reach for it when you
+//! need control the `Uri` does not express, not as the default way to start.
+//!
+//! ## Setting up an AIDL-based Service
+//!
+//! First, create an AIDL interface file (`aidl/hello/IHello.aidl`):
+//!
+//! ```aidl
+//! package hello;
+//!
+//! interface IHello {
+//!     String echo(in String message);
+//! }
+//! ```
+//!
+//! Add a `build.rs` file to generate Rust bindings:
+//!
+//! ```rust,ignore
+//! # use std::path::PathBuf;
+//! rsbinder_aidl::Builder::new()
+//!     .source(PathBuf::from("aidl/hello/IHello.aidl"))
+//!     .output(PathBuf::from("hello.rs"))
+//!     .generate()
+//!     .unwrap();
+//! ```
+//!
+//! In your `Cargo.toml`, add the build dependency:
+//!
+//! ```toml
+//! [build-dependencies]
+//! rsbinder-aidl = "*"  # Check crates.io for the latest version
+//! ```
+//!
+//! ## Implementing the Service
+//!
+//! ```rust,ignore
+//! use rsbinder::*;
+//!
+//! // Include the generated code
+//! rsbinder::include_aidl!("hello", crate::hello::IHello::*);
+//!
+//! // Implement the service
+//! struct HelloService;
+//!
+//! impl Interface for HelloService {}
+//!
+//! impl IHello for HelloService {
+//!     fn echo(&self, message: &str) -> rsbinder::BinderResult<String> {
+//!         Ok(format!("Echo: {}", message))
+//!     }
+//! }
+//!
+//! # fn main() -> Result<()> {
+//! // Kernel binder: init the process state, register with the service
+//! // manager, start the thread pool and join it. The same three calls
+//! // with `serve(Endpoint::unix("/tmp/hello.sock"))` serve over RPC instead.
+//! rsbinder::serve(Uri::kernel())?
+//!     .add("hello_service", BnHello::new_binder(HelloService))?
+//!     .run()?;
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! (`ProcessState::init_default()` + `start_thread_pool()` +
+//! `hub::add_service()` + `join_thread_pool()` remain available as the
+//! low-level form.)
+//!
+//! ## Creating a Client
+//!
+//! ```rust,ignore
+//! use rsbinder::*;
+//!
+//! // Include the same generated code
+//! rsbinder::include_aidl!("hello", crate::hello::IHello::*);
+//!
+//! # fn main() -> Result<()> {
+//! // Init the process state, wait for the service to be registered, and
+//! // cast it to the interface. Over RPC:
+//! // `Endpoint::unix("/tmp/hello.sock").with_service("hello_service")`.
+//! let hello_service: rsbinder::Strong<dyn IHello> =
+//!     rsbinder::connect(Uri::kernel().with_service("hello_service"))?;
+//!
+//! // Call remote method
+//! let result = hello_service.echo("Hello, World!")?;
+//! println!("Service response: {}", result);
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! ## Opting into kernel-level features
+//!
+//! Native binders can opt into per-binder kernel features (for example,
+//! receiving the caller's SELinux security context) via [`BinderFeatures`]
+//! and the `*_with_features` constructor variants. See [`BinderFeatures`]
+//! for the available opt-ins.
+//!
+//! # License
+//!
+//! Licensed under Apache License, Version 2.0.
+//!
+//! # References
+//!
+//! * [AIDL](https://source.android.com/docs/core/architecture/aidl)
+//! * [Binder](https://source.android.com/docs/core/architecture/hidl/binder-ipc)
+//!
+
+#![cfg_attr(
+    target_os = "android",
+    allow(
+        clippy::missing_const_for_thread_local,
+        reason = "android-only false positive, even on thread_locals already using `const { .. }`"
+    )
+)]
+// Library code returns errors; tests may unwrap (plan 13).
+#![cfg_attr(not(test), deny(clippy::unwrap_used))]
+// Every allow outside tests says why (plan 13-1).
+#![cfg_attr(not(test), deny(clippy::allow_attributes_without_reason))]
+
+// Core binder functionality
+mod binder;
+// Async runtime support; private, its items are re-exported at the crate root only.
+#[cfg(feature = "async")]
+mod binder_async;
+mod binder_object;
+/// BinderFS filesystem utilities
+pub mod binderfs;
+/// Helpers for a process bridging two transports (the gateway pattern)
+pub mod bridge;
+// `CommandStream` (L2 ioctl buffer); its private field keeps `thread_state` off the L1 codec.
+mod command_stream;
+// Error types; private, `Result` and `StatusCode` are re-exported at the crate root.
+mod error;
+// Per-handle death-registration bookkeeping behind `IBinder::link_to_death`.
+mod death;
+// `ParcelFileDescriptor`, re-exported at the crate root.
+mod file_descriptor;
+// Per-handle freeze-notification bookkeeping behind `IBinder::add_frozen_state_change_callback`.
+mod freeze;
+// `LazyServiceRegistrar`; documented inside (plain comment, same reason as `entry`).
+pub mod lazy_service;
+mod macros;
+// Server-side binder construction, re-exported at the crate root.
+mod native;
+// Server-side transaction observers; no outer doc (it would break the inner `//!` links).
+pub mod observe;
+// `Parcel`, re-exported at the crate root.
+mod parcel;
+// The (de)serialization trait stack, re-exported at the crate root.
+mod parcelable;
+// `ParcelableHolder`, re-exported at the crate root.
+mod parcelable_holder;
+mod process_state;
+// `Proxy` and `ProxyHandle`, re-exported at the crate root.
+mod proxy;
+/// Process-global proxy count + watermark callbacks
+/// with opt-in per-uid tracking. AOSP `BpBinder` proxy-count surface
+/// (`getBinderProxyCount` / `setBinderProxyCountWatermarks` /
+/// `setBinderProxyCountEventCallback` / `enableCountByUid`).
+pub mod proxy_count;
+mod ref_counter;
+/// Shared-memory IPC: AOSP `IMemoryHeap` / `IMemory` traits, a
+/// `memfd_create` (Linux/Android) / `shm_open` (macOS) backed
+/// `MemoryHeapBase`, and wire-faithful `android.utils.IMemory*`
+/// stubs so a heap fd can travel over the kernel binder or
+/// Unix-socket RPC. See the module docs.
+pub mod shared_memory;
+// Status and exception handling, re-exported at the crate root.
+mod status;
+mod sys;
+/// Thread-local binder state
+pub mod thread_state;
+mod transaction_data;
+// Transport capabilities; not under `rpc`: the kernel path answers the same questions.
+mod transport_caps;
+
+/// RPC transport (binder-over-socket) — a separate stack from the
+/// kernel binder path. Present only with the `rpc` feature.
+#[cfg(feature = "rpc")]
+pub mod rpc;
+
+/// Service hub and manager implementations
+pub mod hub;
+
+/// Client stub for Android's `PermissionManagerService`
+/// (`android.os.IPermissionController`). See module doc for the
+/// AOSP-faithful surface and fail-closed `check_permission` helper.
+pub mod permission_controller;
+
+// Large parcel payloads (AOSP `Parcel::writeBlob`); plain comment, same reason as `cancel`.
+pub mod blob;
+
+// Cooperative cancellation (`android.os.ICancellationSignal`); plain comment, as for `entry`.
+pub mod cancel;
+
+// Streaming with credit-based back-pressure; plain comment, same reason as `cancel` above.
+pub mod stream;
+
+// Fast Message Queue (`MQDescriptor` + `rsbinder-fmq`); plain comment, same reason as `cancel`.
+pub mod fmq;
+/// `android.hardware.common.NativeHandle`: file descriptors plus integers,
+/// as an AIDL HAL carries a `native_handle_t`. The `MQDescriptor` in
+/// [`fmq`] holds its shared memory in one.
+pub use fmq::generated::android::hardware::common::NativeHandle::NativeHandle;
+
+/// Async runtime implementations
+#[cfg(feature = "async")]
+mod rt;
+// Unified entry API (Plan 2-17); no outer doc: it would re-resolve inner `//!` links at root.
+pub mod entry;
+// Reconnect helper (Plan 10-10b); no outer doc, for the same reason.
+pub mod reconnect;
+pub use reconnect::Reconnecting;
+
+#[cfg(feature = "tokio")]
+pub use entry::connect_async;
+pub use entry::{
+    connect, connect_binder, serve, Client, ClientOptions, Endpoint, ServeOptions, Server,
+    ServerGuard, Uri,
+};
+// For generated `IFooAsyncService` impls, so consumers need no `async-trait` dependency.
+#[cfg(feature = "async")]
+#[doc(hidden)]
+pub use async_trait::async_trait as __async_trait;
+
+// `.aidl`-free path (plan 2-19); a trait and its derive share one name across namespaces.
+#[cfg(feature = "macros")]
+pub use rsbinder_macros::{interface, BinderEnum, Parcelable, ServiceSpecificError};
+
+// Explicit re-exports: a glob would leak every new `pub` item past semver review.
+
+// From `binder` — core binder identity, transaction codes, traits.
+pub use binder::{
+    DeathRecipient, FromIBinder, FrozenState, FrozenStateChangeCallback, IBinder, Interface,
+    Remotable, RemoteProxy, SIBinder, Stability, Strong, ToAsyncInterface, ToSyncInterface,
+    Transactable, TransactionCode, TransactionFlags, WIBinder, Weak, DEBUG_PID_TRANSACTION,
+    DUMP_TRANSACTION, EXTENSION_TRANSACTION, FIRST_CALL_TRANSACTION, FLAG_CLEAR_BUF,
+    FLAG_COLLECT_NOTED_APP_OPS, FLAG_ONEWAY, FLAG_PRIVATE_LOCAL, FLAG_PRIVATE_VENDOR,
+    FLAG_UPDATE_TXN, INTERFACE_HEADER, INTERFACE_TRANSACTION, LAST_CALL_TRANSACTION,
+    LIKE_TRANSACTION, PING_TRANSACTION, SET_RPC_CLIENT_TRANSACTION, SHELL_COMMAND_TRANSACTION,
+    START_RECORDING_TRANSACTION, STOP_RECORDING_TRANSACTION, SYSPROPS_TRANSACTION,
+    TWEET_TRANSACTION,
+};
+// `declare_binder_interface!` calls `$crate::__rpc_stamp_descriptor` from consumer crates.
+#[doc(hidden)]
+pub use binder::__rpc_stamp_descriptor;
+// Same reason: the `function_names` arm of `declare_binder_interface!`.
+#[doc(hidden)]
+pub use binder::__transaction_name;
+
+#[cfg(feature = "async")]
+pub use binder_async::{BinderAsyncPool, BinderAsyncRuntime, BoxFuture};
+pub use error::{Result, StatusCode};
+pub use file_descriptor::ParcelFileDescriptor;
+// Fuzz entry points: the out-of-workspace `fuzz/` crate reaches them only via the root.
+#[cfg(all(feature = "rpc", feature = "fuzzing"))]
+#[doc(hidden)]
+pub use file_descriptor::{__fuzz_rpc_fd_index, __fuzz_rpc_fd_index_v1, __fuzz_rpc_raw_fd};
+
+// From `native` — server-side binder construction.
+pub use native::{is_handling_transaction, Binder, BinderFeatures};
+
+// Calling identity (AOSP `IPCThreadState::getCalling*`); an in-flight RPC dispatch answers first.
+pub use thread_state::{
+    calling_caller, calling_caps, clear_calling_identity, clear_calling_work_source,
+    clear_propagate_work_source, get_calling_pid, get_calling_sid, get_calling_uid,
+    get_calling_work_source_uid, get_current_scheduler_policy, get_extended_error,
+    get_strict_mode_policy, has_explicit_identity, restore_calling_identity,
+    restore_calling_work_source, set_calling_work_source_uid, set_strict_mode_policy,
+    should_propagate_work_source, Caller, CallingContext, ExtendedError,
+};
+
+pub use parcel::Parcel;
+// No feature needed: the session-less parcel mode is what refuses binders and fds.
+pub use parcel::{from_bytes, to_bytes};
+
+// From `parcelable` — (de)serialization trait stack.
+pub use parcelable::{
+    Deserialize, DeserializeArray, DeserializeOption, Parcelable, ParcelableMetadata, Serialize,
+    SerializeArray, SerializeOption, NON_NULL_PARCELABLE_FLAG, NULL_PARCELABLE_FLAG,
+};
+
+pub use parcelable_holder::ParcelableHolder;
+pub use process_state::{
+    CallRestriction, ProcessFreezeInfo, ProcessState, DEFAULT_MAX_BINDER_THREADS,
+    MAX_BINDER_MMAP_SIZE,
+};
+
+// From `proxy` — client-side handle types.
+pub use proxy::{Proxy, ProxyHandle};
+
+// Explicit, not glob, so a new `pub` item in `rt` cannot leak past semver review.
+#[cfg(feature = "tokio")]
+pub use rt::{
+    check_interface_async, death_signal, get_interface_async, wait_for_interface_async,
+    DeathSignal, Tokio, TokioRuntime,
+};
+// `status` stays private: the root re-exports are the only path to these types.
+pub use status::{BinderResult, ExceptionCode, ServiceSpecificError, Status};
+pub use transport_caps::TransportCaps;
+
+/// Default path to the binder control device
+pub const DEFAULT_BINDER_CONTROL_PATH: &str = "/dev/binderfs/binder-control";
+/// Default path to the binder device (binderfs, used on Android 11+).
+pub const DEFAULT_BINDER_PATH: &str = "/dev/binderfs/binder";
+/// Default path to the binderfs mount point
+pub const DEFAULT_BINDERFS_PATH: &str = "/dev/binderfs";
+/// Legacy binder device path used on Android 10 and earlier.
+pub const LEGACY_BINDER_PATH: &str = "/dev/binder";
+
+/// Returns `true` when the runtime Android SDK version is at least `version`.
+/// On non-Android platforms this always returns `true`.
+#[cfg(target_os = "android")]
+#[inline]
+pub fn sdk_at_least(version: u32) -> bool {
+    get_android_sdk_version() >= version
+}
+
+/// Returns `true` when the runtime Android SDK version is at least `version`.
+/// On non-Android platforms this always returns `true`.
+#[cfg(not(target_os = "android"))]
+#[inline]
+pub fn sdk_at_least(_version: u32) -> bool {
+    true
+}
+
+#[cfg(target_os = "android")]
+static ANDROID_SDK_VERSION: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
+
+/// Get the Android SDK version from system properties.
+///
+/// Returns the Android SDK version number, or 0 if not available.
+#[cfg(target_os = "android")]
+pub fn get_android_sdk_version() -> u32 {
+    *ANDROID_SDK_VERSION.get_or_init(|| rsproperties::get_or("ro.build.version.sdk", 0))
+}
+
+#[cfg(test)]
+mod tests {
+    #[cfg(target_os = "linux")]
+    use crate::*;
+    #[test]
+    #[cfg(target_os = "linux")]
+    #[serial_test::serial(binder)]
+    fn process_state() {
+        ProcessState::init("/dev/binderfs/binder", DEFAULT_MAX_BINDER_THREADS).expect("init");
+    }
+}

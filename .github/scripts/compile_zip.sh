@@ -3,7 +3,7 @@
 # Assemble the AZenith package zip from the artifacts produced by the
 # previous workflow steps:
 #
-#   Cargo -> Cargo/target/aarch64-linux-android/release/sys_azenithrs-service
+#   Cargo -> Cargo/target/aarch64-linux-android/release/azenith-service
 #
 # Build-only inputs, deliberately NOT shipped:
 #   * Cargo/binder_resolver.apk — embedded into the binary by include_bytes!
@@ -29,7 +29,7 @@ cd "$GITHUB_WORKSPACE" || {
 }
 
 # ---- input built by the earlier cargo-ndk step --------------------------
-BINARY="Cargo/target/aarch64-linux-android/release/sys_azenithrs-service"
+BINARY="Cargo/target/aarch64-linux-android/release/azenith-service"
 
 if [ ! -f "$BINARY" ]; then
 	echo "Rust binary not found: $BINARY (did 'cargo ndk build --release' run?)" >&2

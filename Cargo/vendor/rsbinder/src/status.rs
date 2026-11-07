@@ -1,0 +1,966 @@
+// Copyright 2022 Jeff Kim <hiking90@gmail.com>
+// SPDX-License-Identifier: Apache-2.0
+
+//! Status and exception handling for binder operations.
+//!
+//! This module provides status types for handling exceptions and errors
+//! that occur during binder transactions, including both system-level
+//! errors and application-specific exceptions.
+
+use crate::error;
+use crate::error::StatusCode;
+use crate::parcel::*;
+use crate::parcelable::*;
+use std::fmt::{Debug, Display, Formatter};
+
+/// Result alias for **binder interface methods** — the type returned by the
+/// generated `Bp*` proxy / `Bn*` native stubs and by your `impl` of an AIDL
+/// trait.
+///
+/// The error type is the rich [`Status`] (exception code + service-specific
+/// code + optional message) — what crosses the wire as a method's failure
+/// and what a service returns to raise an application-level error (see
+/// [`Status::new_service_specific_error`]).
+///
+/// The name is deliberately not `Result`: the crate root already has one,
+/// whose error is the flat transport-level [`StatusCode`], and two aliases
+/// spelled `Result` meaning different types is how a single `use` line
+/// silently changes what a file's `Result` is. The two interoperate through `?` in both
+/// directions (`From<Status> for StatusCode` and `From<StatusCode> for
+/// Status`), and `?` on `std::io::Error` works in either context.
+pub type BinderResult<T> = std::result::Result<T, Status>;
+
+/// Exception codes for binder operations.
+///
+/// These codes represent different types of exceptions that can occur
+/// during binder transactions, corresponding to Java exception types
+/// in the Android framework.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+#[repr(i32)]
+pub enum ExceptionCode {
+    /// No exception occurred
+    None = 0,
+    /// Security exception
+    Security = -1,
+    /// Bad parcelable data
+    BadParcelable = -2,
+    /// Illegal argument provided
+    IllegalArgument = -3,
+    /// Null pointer exception
+    NullPointer = -4,
+    /// Illegal state exception
+    IllegalState = -5,
+    /// Network operation on main thread
+    NetworkMainThread = -6,
+    /// Unsupported operation
+    UnsupportedOperation = -7,
+    /// Service-specific exception
+    ServiceSpecific = -8,
+    /// Parcelable exception
+    Parcelable = -9,
+
+    /// Reply parcel carries a noted-AppOps blob before the *real*
+    /// exception code. Wire value `-127` matches
+    /// AOSP `EX_HAS_NOTED_APPOPS_REPLY_HEADER`
+    /// (`frameworks/native/libs/binder/include/binder/Status.h:71`).
+    ///
+    /// Set by a server that received the transaction with
+    /// [`crate::FLAG_COLLECT_NOTED_APP_OPS`] (`0x2`, AOSP `IBinder.java`).
+    /// rsbinder's [`Status::deserialize`] transparently skips the header
+    /// and reads the next i32 as the actual exception code — clients
+    /// observe the same `Status` they would have without the header.
+    HasNotedAppOpsReplyHeader = -127,
+    // This is special and Java specific; see Parcel.java.
+    /// Has reply header (Java-specific). Wire value `-128` matches AOSP
+    /// `EX_HAS_REPLY_HEADER`. Treated as `EX_NONE` after the header is
+    /// skipped — the AOSP convention for "fat response header"
+    /// piggybacking.
+    HasReplyHeader = -128,
+    // Special: tells C++ binder proxies the transaction failed at a low level.
+    /// Transaction failed at low level
+    TransactionFailed = -129,
+    /// Generic error
+    JustError = -256,
+}
+
+impl Display for ExceptionCode {
+    fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
+        match self {
+            ExceptionCode::None => write!(f, "None"),
+            ExceptionCode::Security => write!(f, "Security"),
+            ExceptionCode::BadParcelable => write!(f, "BadParcelable"),
+            ExceptionCode::IllegalArgument => write!(f, "IllegalArgument"),
+            ExceptionCode::NullPointer => write!(f, "NullPointer"),
+            ExceptionCode::IllegalState => write!(f, "IllegalState"),
+            ExceptionCode::NetworkMainThread => write!(f, "NetworkMainThread"),
+            ExceptionCode::UnsupportedOperation => write!(f, "UnsupportedOperation"),
+            ExceptionCode::ServiceSpecific => write!(f, "ServiceSpecific"),
+            ExceptionCode::Parcelable => write!(f, "Parcelable"),
+            ExceptionCode::HasNotedAppOpsReplyHeader => write!(f, "HasNotedAppOpsReplyHeader"),
+            ExceptionCode::HasReplyHeader => write!(f, "HasReplyHeader"),
+            ExceptionCode::TransactionFailed => write!(f, "TransactionFailed"),
+            ExceptionCode::JustError => write!(f, "JustError"),
+        }
+    }
+}
+
+impl Serialize for ExceptionCode {
+    fn serialize(&self, parcel: &mut Parcel) -> error::Result<()> {
+        parcel.write::<i32>(&(*self as i32))
+    }
+}
+
+impl Deserialize for ExceptionCode {
+    fn deserialize(parcel: &mut Parcel) -> error::Result<Self> {
+        let exception = parcel.read::<i32>()?;
+        let code = match exception {
+            exception if exception == ExceptionCode::None as i32 => ExceptionCode::None,
+            exception if exception == ExceptionCode::Security as i32 => ExceptionCode::Security,
+            exception if exception == ExceptionCode::BadParcelable as i32 => {
+                ExceptionCode::BadParcelable
+            }
+            exception if exception == ExceptionCode::IllegalArgument as i32 => {
+                ExceptionCode::IllegalArgument
+            }
+            exception if exception == ExceptionCode::NullPointer as i32 => {
+                ExceptionCode::NullPointer
+            }
+            exception if exception == ExceptionCode::IllegalState as i32 => {
+                ExceptionCode::IllegalState
+            }
+            exception if exception == ExceptionCode::NetworkMainThread as i32 => {
+                ExceptionCode::NetworkMainThread
+            }
+            exception if exception == ExceptionCode::UnsupportedOperation as i32 => {
+                ExceptionCode::UnsupportedOperation
+            }
+            exception if exception == ExceptionCode::ServiceSpecific as i32 => {
+                ExceptionCode::ServiceSpecific
+            }
+            exception if exception == ExceptionCode::Parcelable as i32 => ExceptionCode::Parcelable,
+            exception if exception == ExceptionCode::HasNotedAppOpsReplyHeader as i32 => {
+                ExceptionCode::HasNotedAppOpsReplyHeader
+            }
+            exception if exception == ExceptionCode::HasReplyHeader as i32 => {
+                ExceptionCode::HasReplyHeader
+            }
+            exception if exception == ExceptionCode::TransactionFailed as i32 => {
+                ExceptionCode::TransactionFailed
+            }
+            _ => ExceptionCode::JustError,
+        };
+        Ok(code)
+    }
+}
+
+/// Status information for binder operations.
+///
+/// `Status` combines an exception code, status code, and optional message
+/// to provide comprehensive error information for binder transactions.
+/// It can represent both successful operations and various failure modes.
+///
+/// `Clone` is derived (every field is `Clone`) so callers can fan a
+/// failed result out to multiple handlers, copy it while logging, or
+/// re-surface it on retry — mirroring AOSP's copyable `Status`. `PartialEq`
+/// is a manual impl (it deliberately ignores `message`), so it is not part
+/// of the derive.
+///
+/// # Wire format
+///
+/// The codec follows AOSP `Status::writeToParcel` / `readFromParcel`
+/// (`frameworks/native/libs/binder/Status.cpp`):
+///
+/// - On `ExceptionCode::TransactionFailed` nothing is written and the status
+///   code comes back as the write error. The binder layer has already failed,
+///   so this is deliberately indistinguishable from a parcel-write failure,
+///   as in libbinder.
+/// - A leading `HasNotedAppOpsReplyHeader` blob is skipped and the next `i32`
+///   is read as the exception code, which may itself be `HasReplyHeader`; a
+///   `HasReplyHeader` blob is skipped and the status reads as `None`.
+/// - The message is read as an optional string. A Java peer that throws
+///   without a detail message writes a null string (length -1); a non-null
+///   read would fail the whole decode with `UnexpectedNull` and hide the
+///   exception code.
+/// - The remote stack-trace header size includes its own `i32`, so the skip
+///   target is the position before that `i32` plus the size; 0 means no header.
+///
+/// Converted to `StatusCode`, an exception carrying an `Ok` code becomes
+/// `FailedTransaction`, so a caller never holds `Err(StatusCode::Ok)`.
+#[derive(Clone)]
+pub struct Status {
+    code: StatusCode,
+    exception: ExceptionCode,
+    message: Option<String>,
+}
+
+impl PartialEq for Status {
+    fn eq(&self, other: &Self) -> bool {
+        self.code == other.code && self.exception == other.exception
+    }
+}
+
+impl Status {
+    fn new(exception: ExceptionCode, status: StatusCode, message: Option<String>) -> Self {
+        Status {
+            code: status,
+            exception,
+            message,
+        }
+    }
+
+    pub fn new_service_specific_error(err: i32, message: Option<String>) -> Self {
+        Self::new(
+            ExceptionCode::ServiceSpecific,
+            StatusCode::ServiceSpecific(err),
+            message,
+        )
+    }
+
+    /// [`new_service_specific_error`](Self::new_service_specific_error)
+    /// from a typed error instead of a bare `i32`.
+    ///
+    /// The wire is the same — one `i32` and an optional message, AOSP's
+    /// `Status::fromServiceSpecificError` — so a C++ or Java peer reads
+    /// exactly what it read before. What changes is that the enum ↔ code
+    /// mapping lives in one place instead of at every call site.
+    ///
+    /// ```
+    /// # use rsbinder::*;
+    /// rsbinder::declare_binder_enum! {
+    ///     LookupError : [i32; 2] { NOT_FOUND = 1, BUSY = 2, }
+    /// }
+    /// rsbinder::impl_service_specific_error!(LookupError);
+    ///
+    /// fn lookup() -> BinderResult<i32> {
+    ///     Err(Status::service_specific(LookupError::NOT_FOUND, Some("no such row")))
+    /// }
+    /// # assert_eq!(lookup().unwrap_err().service_specific_error(), 1);
+    /// ```
+    ///
+    /// A plain Rust enum gets there with `#[derive(ServiceSpecificError)]`
+    /// (the `macros` feature) instead of the two macros above. Read the
+    /// value back with [`service_error`](Self::service_error).
+    pub fn service_specific<E: ServiceSpecificError>(err: E, message: Option<&str>) -> Self {
+        Self::new_service_specific_error(err.code(), message.map(str::to_owned))
+    }
+
+    /// The service-specific code as `E`, or `None` when this status does
+    /// not carry one of `E`'s values.
+    ///
+    /// `None` when the exception is not
+    /// [`ExceptionCode::ServiceSpecific`], or when `E` does not declare
+    /// the code — a peer built against a newer `.aidl`. Reach for
+    /// [`service_specific_error`](Self::service_specific_error) when the
+    /// raw `i32` is what you need to log or forward.
+    ///
+    /// A status built from the bare [`ExceptionCode::ServiceSpecific`]
+    /// carries code `0`, as AOSP's
+    /// `Status::fromExceptionCode(EX_SERVICE_SPECIFIC)` does.
+    ///
+    /// ```
+    /// # use rsbinder::*;
+    /// # rsbinder::declare_binder_enum! {
+    /// #     LookupError : [i32; 2] { NOT_FOUND = 1, BUSY = 2, }
+    /// # }
+    /// # rsbinder::impl_service_specific_error!(LookupError);
+    /// fn handle(status: &Status) -> &'static str {
+    ///     match status.service_error::<LookupError>() {
+    ///         Some(LookupError::NOT_FOUND) => "create it",
+    ///         Some(LookupError::BUSY) => "retry later",
+    ///         _ => "unhandled",
+    ///     }
+    /// }
+    /// # let busy = Status::service_specific(LookupError::BUSY, None);
+    /// # assert_eq!(handle(&busy), "retry later");
+    /// # assert_eq!(handle(&Status::new_service_specific_error(9, None)), "unhandled");
+    /// ```
+    ///
+    /// The `_` arm is not optional: an `.aidl` enum is an open newtype,
+    /// so `Some(LookupError(9))` is a value the type can hold even
+    /// though `from_code` never produces one.
+    pub fn service_error<E: ServiceSpecificError>(&self) -> Option<E> {
+        if self.exception != ExceptionCode::ServiceSpecific {
+            return None;
+        }
+        let StatusCode::ServiceSpecific(code) = self.code else {
+            return None;
+        };
+        E::from_code(code)
+    }
+
+    pub fn is_ok(&self) -> bool {
+        self.exception == ExceptionCode::None
+    }
+
+    pub fn exception_code(&self) -> ExceptionCode {
+        self.exception
+    }
+
+    pub fn transaction_error(&self) -> StatusCode {
+        if self.exception == ExceptionCode::TransactionFailed {
+            self.code
+        } else {
+            StatusCode::Ok
+        }
+    }
+
+    pub fn service_specific_error(&self) -> i32 {
+        if let StatusCode::ServiceSpecific(err) = self.code {
+            err
+        } else {
+            0
+        }
+    }
+
+    /// The message carried by this status, if any.
+    ///
+    /// What `None` means depends on where the status came from, because
+    /// the wire has no way to say "no message":
+    ///
+    /// - A status built locally reports exactly what was supplied, so
+    ///   `None` is the `None` that was passed in.
+    /// - An *exception* read from a parcel reports `Some("")` when the
+    ///   sender supplied no message: the serializer writes
+    ///   `message.unwrap_or("")`, as AOSP's C++ `Status` does, and a
+    ///   zero-length String16 reads back as an empty `String`. There,
+    ///   `None` arrives only from a peer that wrote a *null* string — in
+    ///   practice a Java peer throwing an exception with no detail
+    ///   message.
+    /// - An `EX_NONE` status carries no message field on the wire at all:
+    ///   `serialize` returns right after the exception code and
+    ///   `deserialize` reads none, so a successful status read from a
+    ///   parcel always reports `None`. The `EX_HAS_REPLY_HEADER` path,
+    ///   which folds to `EX_NONE`, is the same. `EX_TRANSACTION_FAILED`
+    ///   is never written either.
+    ///
+    /// Nothing is folded in either direction; callers that treat an
+    /// absent message and an empty one alike should test both.
+    /// [`Display`] already folds it into a line for logging; this is for
+    /// a caller that wants the string itself.
+    pub fn message(&self) -> Option<&str> {
+        self.message.as_deref()
+    }
+}
+
+/// A type whose values are binder **service-specific error codes**.
+///
+/// Implement it with [`impl_service_specific_error!`](crate::impl_service_specific_error)
+/// for an `.aidl` enum, or `#[derive(ServiceSpecificError)]` for a plain
+/// Rust enum; then [`Status::service_specific`] and
+/// [`Status::service_error`] carry values of the type instead of bare
+/// `i32`s. Nothing about the wire changes — a code is an `i32` there, as
+/// it is for AOSP.
+///
+/// The code space is `i32` because that is the field AOSP's `Status`
+/// carries. An `.aidl` enum backed by `long` therefore cannot be an
+/// error type, and attaching this to one is a compile error rather than
+/// a value that truncates on the wire.
+pub trait ServiceSpecificError: Sized {
+    /// The `i32` this value goes on the wire as.
+    ///
+    /// An inherent `code` method on the implementing type shadows this
+    /// one at a call site (Rust resolves inherent methods first), which
+    /// is a reason to reach for `Status::service_specific` rather than
+    /// calling this directly.
+    fn code(&self) -> i32;
+
+    /// The value a code names, or `None` if this type declares no such
+    /// value — which is what a peer built against a newer contract looks
+    /// like from here.
+    fn from_code(code: i32) -> Option<Self>;
+}
+
+impl std::error::Error for Status {}
+
+impl Display for Status {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if self.exception == ExceptionCode::None {
+            write!(f, "{}", self.code)
+        } else {
+            write!(
+                f,
+                "{} / {}: {}",
+                self.exception,
+                self.code,
+                self.message.as_deref().unwrap_or("")
+            )
+        }
+    }
+}
+
+impl Debug for Status {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        Display::fmt(self, f)
+    }
+}
+
+impl From<ExceptionCode> for StatusCode {
+    fn from(exception: ExceptionCode) -> Self {
+        match exception {
+            ExceptionCode::TransactionFailed => StatusCode::FailedTransaction,
+            // Code 0 matches AOSP `fromExceptionCode(EX_SERVICE_SPECIFIC)` and the wire read-back.
+            ExceptionCode::ServiceSpecific => StatusCode::ServiceSpecific(0),
+            _ => StatusCode::Ok,
+        }
+    }
+}
+
+impl From<Status> for StatusCode {
+    fn from(status: Status) -> Self {
+        // An exception with an `Ok` code must not map to `Ok`; see `Status` rustdoc.
+        match status.code {
+            StatusCode::Ok if status.exception != ExceptionCode::None => {
+                StatusCode::FailedTransaction
+            }
+            code => code,
+        }
+    }
+}
+
+impl From<StatusCode> for ExceptionCode {
+    fn from(status: StatusCode) -> Self {
+        match status {
+            StatusCode::Ok => ExceptionCode::None,
+            StatusCode::ServiceSpecific(_) => ExceptionCode::ServiceSpecific,
+            _ => ExceptionCode::TransactionFailed,
+        }
+    }
+}
+
+impl From<ExceptionCode> for Status {
+    fn from(exception: ExceptionCode) -> Self {
+        Status::new(exception, exception.into(), None)
+    }
+}
+
+impl From<(ExceptionCode, &str)> for Status {
+    fn from(arg: (ExceptionCode, &str)) -> Self {
+        Status::new(arg.0, arg.0.into(), Some(arg.1.to_owned()))
+    }
+}
+
+impl From<StatusCode> for Status {
+    fn from(status: StatusCode) -> Self {
+        Status::new(status.into(), status, None)
+    }
+}
+
+/// Mirrors `From<std::io::Error> for StatusCode` so a [`BinderResult`]
+/// method can `?` an I/O error directly. `?` does not chain `From` impls,
+/// so the transitive `io::Error → StatusCode → Status` path is not enough
+/// on its own — this direct impl is required.
+impl From<std::io::Error> for Status {
+    fn from(err: std::io::Error) -> Self {
+        StatusCode::from(err).into()
+    }
+}
+
+/// Mirrors `From<std::array::TryFromSliceError> for StatusCode` for the same
+/// `?`-ergonomics reason as `From<std::io::Error> for Status`.
+impl From<std::array::TryFromSliceError> for Status {
+    fn from(err: std::array::TryFromSliceError) -> Self {
+        StatusCode::from(err).into()
+    }
+}
+
+impl Serialize for Status {
+    fn serialize(&self, parcel: &mut Parcel) -> error::Result<()> {
+        // AOSP `writeToParcel`: EX_TRANSACTION_FAILED writes nothing and returns the code as Err.
+        if self.exception == ExceptionCode::TransactionFailed {
+            return Err(self.code);
+        }
+
+        parcel.write::<i32>(&(self.exception as _))?;
+        if self.exception == ExceptionCode::None {
+            return Ok(());
+        }
+
+        parcel.write::<str>(self.message.as_deref().unwrap_or(""))?;
+        parcel.write::<i32>(&0)?; // Empty remote stack trace header
+
+        if self.exception == ExceptionCode::ServiceSpecific {
+            // AOSP `mErrorCode`: any `int32`, not a `status_t`, so no sign rule applies.
+            parcel.write::<i32>(&self.service_specific_error())?;
+        } else if self.exception == ExceptionCode::Parcelable {
+            parcel.write::<i32>(&0)?;
+        }
+
+        Ok(())
+    }
+}
+
+fn read_check_header_size(parcel: &mut Parcel) -> error::Result<()> {
+    // Skip over the blob of Parcelable data
+    let header_start = parcel.data_position();
+    // Get available size before reading more
+    let header_avail = parcel.data_avail();
+
+    let header_size = parcel.read::<i32>()?;
+
+    // Check for negative values first
+    if header_size < 0 {
+        log::error!("0x534e4554:132650049 Negative header_size({header_size}).");
+        return Err(StatusCode::Unknown);
+    }
+
+    // Safe conversion after negativity check
+    let header_size_usize = header_size as usize;
+
+    // Check against available data
+    if header_size_usize > header_avail {
+        log::error!(
+            "0x534e4554:132650049 Invalid header_size({header_size}) exceeds available({header_avail})."
+        );
+        return Err(StatusCode::Unknown);
+    }
+
+    // Prevent integer overflow in position calculation
+    let new_position = header_start.checked_add(header_size_usize).ok_or_else(|| {
+        log::error!("0x534e4554:132650049 Position overflow with header_size({header_size})");
+        StatusCode::Unknown
+    })?;
+
+    parcel.set_data_position(new_position);
+    Ok(())
+}
+
+impl Deserialize for Status {
+    fn deserialize(parcel: &mut Parcel) -> error::Result<Self> {
+        let mut exception = parcel.read::<ExceptionCode>()?;
+
+        // AOSP `Status::readFromParcel` order: the appops header first, then the reply header.
+        if exception == ExceptionCode::HasNotedAppOpsReplyHeader {
+            read_check_header_size(parcel)?;
+            exception = parcel.read::<ExceptionCode>()?;
+        }
+        if exception == ExceptionCode::HasReplyHeader {
+            read_check_header_size(parcel)?;
+            exception = ExceptionCode::None;
+        }
+        let status = if exception == ExceptionCode::None {
+            exception.into()
+        } else {
+            // Optional as in AOSP: a Java exception without a message sends a null string (-1).
+            let message: Option<String> = parcel.read::<Option<String>>()?;
+
+            // The trace header size includes its own i32 (AOSP): skip to `header_start + size`.
+            let header_start = parcel.data_position();
+            let header_avail = parcel.data_avail();
+            let remote_stack_trace_header_size = parcel.read::<i32>()?;
+
+            // Check for negative values first
+            if remote_stack_trace_header_size < 0 {
+                log::error!(
+                    "0x534e4554:132650049 Negative remote_stack_trace_header_size({remote_stack_trace_header_size})."
+                );
+                return Err(StatusCode::Unknown);
+            }
+
+            // Safe conversion after negativity check
+            let trace_size_usize = remote_stack_trace_header_size as usize;
+
+            // `header_avail` predates the size read, so it includes it, like AOSP's `remote_avail`.
+            if trace_size_usize > header_avail {
+                log::error!(
+                    "0x534e4554:132650049 Invalid remote_stack_trace_header_size({remote_stack_trace_header_size}) exceeds available({header_avail})."
+                );
+                return Err(StatusCode::Unknown);
+            }
+
+            if trace_size_usize != 0 {
+                // Prevent integer overflow in position calculation
+                let new_position = header_start.checked_add(trace_size_usize).ok_or_else(|| {
+                    log::error!(
+                        "0x534e4554:132650049 Position overflow with remote_stack_trace_header_size({remote_stack_trace_header_size})"
+                    );
+                    StatusCode::Unknown
+                })?;
+
+                parcel.set_data_position(new_position);
+            }
+
+            let code = if exception == ExceptionCode::ServiceSpecific {
+                let code = parcel.read::<i32>()?;
+                StatusCode::ServiceSpecific(code)
+            } else if exception == ExceptionCode::Parcelable {
+                read_check_header_size(parcel)?;
+                StatusCode::Ok
+            } else {
+                StatusCode::Ok
+            };
+
+            Status::new(exception, code, message)
+        };
+
+        Ok(status)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::*;
+
+    #[test]
+    fn test_status() -> Result<()> {
+        let status = Status::from(StatusCode::Unknown);
+        assert_eq!(status.exception_code(), ExceptionCode::TransactionFailed);
+        assert_eq!(status.transaction_error(), StatusCode::Unknown);
+
+        Ok(())
+    }
+
+    /// AOSP `Status::setFromStatusT`: every non-OK `status_t` is `EX_TRANSACTION_FAILED`.
+    #[test]
+    fn unexpected_null_is_a_transaction_error_not_an_exception() {
+        let status = Status::from(StatusCode::UnexpectedNull);
+        assert_eq!(status.exception_code(), ExceptionCode::TransactionFailed);
+        assert_eq!(status.transaction_error(), StatusCode::UnexpectedNull);
+        // The reply carries it as the transact status, not as a `-4` exception header.
+        let mut parcel = Parcel::new();
+        assert_eq!(parcel.write(&status), Err(StatusCode::UnexpectedNull));
+        assert_eq!(parcel.data_size(), 0);
+    }
+
+    crate::declare_binder_enum! {
+        LookupError : [i32; 2] {
+            NOT_FOUND = 1,
+            BUSY = 2,
+        }
+    }
+    crate::impl_service_specific_error!(LookupError);
+
+    // A `byte`-backed enum widens into the status i32; the macro refuses a `long`-backed one.
+    crate::declare_binder_enum! {
+        SmallError : [i8; 2] {
+            // A declared 0 catches a `service_error` that fell back to code 0.
+            NONE = 0,
+            OFFLINE = -3,
+        }
+    }
+    crate::impl_service_specific_error!(SmallError);
+
+    /// Plan 10-4 AC-4.1/4.2/4.3: both transports share this one `Status` codec round trip.
+    #[test]
+    fn a_typed_service_error_survives_the_wire() {
+        let sent = Status::service_specific(LookupError::BUSY, Some("try again"));
+        let mut parcel = Parcel::new();
+        parcel.write(&sent).expect("write status");
+        parcel.set_data_position(0);
+        let got: Status = parcel.read().expect("read status");
+
+        assert_eq!(got.exception_code(), ExceptionCode::ServiceSpecific);
+        assert_eq!(got.service_error::<LookupError>(), Some(LookupError::BUSY));
+        assert_eq!(got.service_specific_error(), 2);
+        assert_eq!(got.message(), Some("try again"));
+
+        // A negative code through a narrower backing widens sign-preserving, not bit-reinterpreted.
+        let small = Status::service_specific(SmallError::OFFLINE, None);
+        assert_eq!(small.service_specific_error(), -3);
+        assert_eq!(
+            small.service_error::<SmallError>(),
+            Some(SmallError::OFFLINE)
+        );
+        assert_eq!(small.message(), None);
+
+        // `None` goes out as an empty String16 and reads back `Some("")`; only a Java null is None.
+        let mut parcel = Parcel::new();
+        parcel.write(&small).expect("write status");
+        parcel.set_data_position(0);
+        let small_back: Status = parcel.read().expect("read status");
+        assert_eq!(small_back.message(), Some(""));
+        assert_eq!(
+            small_back.service_error::<SmallError>(),
+            Some(SmallError::OFFLINE)
+        );
+
+        // A bare service-specific exception carries code 0 as in AOSP, before and after the wire.
+        let codeless = Status::from(ExceptionCode::ServiceSpecific);
+        assert_eq!(
+            codeless.service_error::<SmallError>(),
+            Some(SmallError::NONE)
+        );
+        let mut parcel = Parcel::new();
+        parcel.write(&codeless).expect("write status");
+        parcel.set_data_position(0);
+        let codeless_back: Status = parcel.read().expect("read status");
+        assert_eq!(
+            codeless_back.service_error::<SmallError>(),
+            Some(SmallError::NONE)
+        );
+
+        // AC-4.2: an undeclared code is no enum value, but the raw `i32` stays available.
+        let newer = Status::new_service_specific_error(9, None);
+        assert_eq!(newer.service_error::<LookupError>(), None);
+        assert_eq!(newer.service_specific_error(), 9);
+
+        // AC-4.3: the same number under another exception is not this error; the exception decides.
+        let security = Status::new(
+            ExceptionCode::Security,
+            StatusCode::ServiceSpecific(2),
+            None,
+        );
+        assert_eq!(security.service_error::<LookupError>(), None);
+    }
+
+    #[test]
+    fn test_status_display() -> Result<()> {
+        let unknown = Status::from(StatusCode::Unknown);
+        assert_eq!(format!("{unknown}"), "TransactionFailed / Unknown: ");
+
+        let service_specific =
+            Status::new_service_specific_error(1, Some("Service specific error".to_owned()));
+        assert_eq!(
+            format!("{service_specific}"),
+            "ServiceSpecific / ServiceSpecific(1): Service specific error"
+        );
+
+        let exception = Status::new(
+            ExceptionCode::BadParcelable,
+            StatusCode::Unknown,
+            Some("Bad parcelable".to_owned()),
+        );
+        assert_eq!(
+            format!("{exception}"),
+            "BadParcelable / Unknown: Bad parcelable"
+        );
+
+        Ok(())
+    }
+
+    // `?` does not chain `From`, so the direct `Status` impls must exist; see their rustdoc.
+    #[test]
+    fn binder_result_question_marks_io_and_slice_errors() {
+        // io::Error path: ENOENT → NameNotFound, surfaced through Status.
+        fn open_missing() -> BinderResult<std::fs::File> {
+            Ok(std::fs::File::open("/nonexistent/rsbinder/regression")?)
+        }
+        assert_eq!(
+            StatusCode::from(open_missing().unwrap_err()),
+            StatusCode::NameNotFound,
+        );
+
+        // TryFromSliceError path: wrong-length slice → NotEnoughData.
+        fn take_four(bytes: &[u8]) -> BinderResult<[u8; 4]> {
+            Ok(bytes.try_into()?)
+        }
+        assert_eq!(
+            StatusCode::from(take_four(&[1, 2, 3]).unwrap_err()),
+            StatusCode::NotEnoughData,
+        );
+    }
+
+    // A Java peer's non-zero, size-inclusive trace header is skipped by exactly `start + size`.
+    #[test]
+    fn deserialize_skips_nonzero_remote_stack_trace_header() {
+        let mut parcel = Parcel::new();
+        parcel
+            .write::<i32>(&(ExceptionCode::ServiceSpecific as i32))
+            .unwrap();
+        parcel.write::<String>(&"boom".to_owned()).unwrap();
+        // Size-inclusive header: 4 (the size field) + 4 (one i32 of trace payload) = 8.
+        parcel.write::<i32>(&8i32).unwrap();
+        parcel.write::<i32>(&0x5555_5555i32).unwrap(); // trace payload
+        parcel.write::<i32>(&777i32).unwrap(); // service-specific code
+
+        parcel.set_data_position(0);
+        let status = Status::deserialize(&mut parcel).expect("deserialize");
+        assert_eq!(
+            StatusCode::from(status),
+            StatusCode::ServiceSpecific(777),
+            "non-zero size-inclusive stack-trace header must be skipped exactly"
+        );
+    }
+
+    #[test]
+    fn test_status_serialize() -> Result<()> {
+        let status = Status::from(StatusCode::ServiceSpecific(1));
+        let mut parcel = Parcel::new();
+        status.serialize(&mut parcel).unwrap();
+
+        // deserialize
+        parcel.set_data_position(0);
+        let deserialized = Status::deserialize(&mut parcel).unwrap();
+        assert_eq!(status, deserialized);
+
+        // serialize parcelable
+        let status = Status::new(
+            ExceptionCode::Parcelable,
+            StatusCode::Ok,
+            Some("Parcelable".to_owned()),
+        );
+        let mut parcel = Parcel::new();
+        status.serialize(&mut parcel).unwrap();
+
+        // deserialize parcelable
+        parcel.set_data_position(0);
+        let deserialized = Status::deserialize(&mut parcel).unwrap();
+        assert_eq!(status, deserialized);
+        // `PartialEq` ignores `message`, so the String16 field is checked explicitly.
+        assert!(
+            deserialized.to_string().ends_with("Parcelable"),
+            "message did not round-trip: {deserialized}"
+        );
+
+        Ok(())
+    }
+
+    // An exception with an `Ok` code must not map to `Ok`: `Err(StatusCode::Ok)` reads as success.
+    #[test]
+    fn status_with_exception_never_maps_to_ok() {
+        let status = Status::new(ExceptionCode::IllegalArgument, StatusCode::Ok, None);
+        assert_eq!(
+            StatusCode::from(status),
+            StatusCode::FailedTransaction,
+            "exception + Ok code must surface as FailedTransaction, not Ok"
+        );
+
+        // Success path: no exception, Ok code → preserved as Ok.
+        let ok = Status::new(ExceptionCode::None, StatusCode::Ok, None);
+        assert_eq!(StatusCode::from(ok), StatusCode::Ok);
+
+        // Real error codes are preserved unchanged.
+        let svc = Status::from(StatusCode::ServiceSpecific(7));
+        assert_eq!(StatusCode::from(svc), StatusCode::ServiceSpecific(7));
+        let txn = Status::new(
+            ExceptionCode::TransactionFailed,
+            StatusCode::DeadObject,
+            None,
+        );
+        assert_eq!(StatusCode::from(txn), StatusCode::DeadObject);
+    }
+
+    // AOSP `writeToParcel`: EX_TRANSACTION_FAILED writes nothing and returns the code as the error.
+    #[test]
+    fn serialize_transaction_failed_returns_err_without_writing() {
+        let status = Status::new(
+            ExceptionCode::TransactionFailed,
+            StatusCode::DeadObject,
+            None,
+        );
+        let mut parcel = Parcel::new();
+        assert_eq!(status.serialize(&mut parcel), Err(StatusCode::DeadObject));
+        assert_eq!(
+            parcel.data_size(),
+            0,
+            "nothing must be written on the failed path"
+        );
+    }
+
+    // ---- EX_HAS_NOTED_APPOPS_REPLY_HEADER / EX_HAS_REPLY_HEADER ----
+
+    /// Wire values match AOSP `Status.h:71,74`; a mismatch corrupts every header-carrying reply.
+    #[test]
+    fn appops_header_exception_codes_match_aosp_wire() {
+        assert_eq!(
+            ExceptionCode::HasNotedAppOpsReplyHeader as i32,
+            -127,
+            "EX_HAS_NOTED_APPOPS_REPLY_HEADER must be -127 (AOSP Status.h:71)"
+        );
+        assert_eq!(
+            ExceptionCode::HasReplyHeader as i32,
+            -128,
+            "EX_HAS_REPLY_HEADER must be -128 (AOSP Status.h:74)"
+        );
+    }
+
+    /// Zeroed header blob, size field counting itself (`Status.cpp::skipUnusedHeader`), 4-aligned.
+    fn write_header_blob(parcel: &mut Parcel, header_payload_bytes: usize) {
+        let aligned_payload = header_payload_bytes.div_ceil(4) * 4;
+        let size_field = 4 + aligned_payload;
+        parcel.write::<i32>(&(size_field as i32)).unwrap();
+        for _ in 0..(aligned_payload / 4) {
+            parcel.write::<i32>(&0i32).unwrap();
+        }
+    }
+
+    /// AppOps header (-127) + blob + `EX_NONE` decodes as `Status::ok()`.
+    #[test]
+    fn deserialize_skips_appops_header_then_reads_ex_none() {
+        let mut parcel = Parcel::new();
+        parcel
+            .write::<i32>(&(ExceptionCode::HasNotedAppOpsReplyHeader as i32))
+            .unwrap();
+        write_header_blob(&mut parcel, 16); // 16-byte fake AppOps blob
+        parcel.write::<i32>(&(ExceptionCode::None as i32)).unwrap();
+
+        parcel.set_data_position(0);
+        let status = Status::deserialize(&mut parcel).expect("deserialize");
+        assert_eq!(status.exception_code(), ExceptionCode::None);
+        assert!(status.is_ok());
+    }
+
+    /// AppOps header → reply header (-128) collapses to `EX_NONE` (`Status.cpp::readFromParcel`).
+    #[test]
+    fn deserialize_skips_appops_then_reply_header_collapses_to_none() {
+        let mut parcel = Parcel::new();
+        parcel
+            .write::<i32>(&(ExceptionCode::HasNotedAppOpsReplyHeader as i32))
+            .unwrap();
+        write_header_blob(&mut parcel, 8);
+        parcel
+            .write::<i32>(&(ExceptionCode::HasReplyHeader as i32))
+            .unwrap();
+        write_header_blob(&mut parcel, 4);
+
+        parcel.set_data_position(0);
+        let status = Status::deserialize(&mut parcel).expect("deserialize");
+        assert_eq!(
+            status.exception_code(),
+            ExceptionCode::None,
+            "EX_HAS_REPLY_HEADER (-128) must collapse to None"
+        );
+    }
+
+    /// AppOps header + real `EX_SECURITY` (-1) still surfaces the security exception.
+    #[test]
+    fn deserialize_skips_appops_header_then_surfaces_real_exception() {
+        let mut parcel = Parcel::new();
+        parcel
+            .write::<i32>(&(ExceptionCode::HasNotedAppOpsReplyHeader as i32))
+            .unwrap();
+        write_header_blob(&mut parcel, 12);
+        // Real exception payload: code + message + trace size.
+        parcel
+            .write::<i32>(&(ExceptionCode::Security as i32))
+            .unwrap();
+        parcel.write::<String>(&"denied".to_owned()).unwrap();
+        parcel.write::<i32>(&0i32).unwrap(); // remote stack trace header size
+
+        parcel.set_data_position(0);
+        let status = Status::deserialize(&mut parcel).expect("deserialize");
+        assert_eq!(status.exception_code(), ExceptionCode::Security);
+    }
+
+    // ---- FLAG_UPDATE_TXN / FLAG_COLLECT_NOTED_APP_OPS flag values ----
+
+    /// `FLAG_UPDATE_TXN` = AOSP `TF_UPDATE_TXN` 0x40 (UAPI `binder.h:346`), a kernel-checked bit.
+    #[test]
+    fn flag_update_txn_matches_kernel_wire() {
+        assert_eq!(
+            crate::FLAG_UPDATE_TXN,
+            0x40,
+            "FLAG_UPDATE_TXN must be the kernel-defined 0x40"
+        );
+    }
+
+    /// AOSP `IBinder.java` value `0x2`; `0x80` is the android17-6.18 `TF_DEFER_COMPLETE`.
+    #[test]
+    fn flag_collect_noted_app_ops_matches_aosp_userspace() {
+        assert_eq!(
+            crate::FLAG_COLLECT_NOTED_APP_OPS,
+            0x2,
+            "FLAG_COLLECT_NOTED_APP_OPS must be 0x2 (AOSP IBinder.java)"
+        );
+    }
+
+    // ---- binder_extended_error struct layout ----
+
+    /// `sys::binder_extended_error` has the kernel struct's size (12) and alignment (4).
+    #[test]
+    fn extended_error_struct_layout_matches_kernel() {
+        use std::mem::{align_of, size_of};
+        type Ee = crate::sys::binder_extended_error;
+        assert_eq!(size_of::<Ee>(), 12);
+        assert_eq!(align_of::<Ee>(), 4);
+    }
+}

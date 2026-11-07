@@ -1,0 +1,304 @@
+// Copyright 2022 Jeff Kim <hiking90@gmail.com>
+// SPDX-License-Identifier: Apache-2.0
+
+//! **INSECURE** plaintext TCP transport — DEBUG / interop bring-up
+//! ONLY. Gated behind the `rpc-tcp-debug` feature so it is absent from
+//! a plain `rpc` build.
+//!
+//! Android precedent: android-12 r34 RPC binder has `SocketType::INET`
+//! and `binderRpcTest.cpp` uses an INET loopback as a *test* transport.
+//! This is the rsbinder equivalent — for observing the R34 wire with
+//! `tcpdump`, for live r34 interop over standard INET loopback, and for
+//! macOS development (no `SO_PEERCRED`).
+//!
+//! **Never production.** Safeguards baked in by type/construction:
+//! * [`PeerIdentity::Anonymous`] is hard-wired — there is no code path
+//!   that returns any other identity, so ACL is impossible by
+//!   construction.
+//! * Default bind is loopback (`127.0.0.1`); a non-loopback bind is a
+//!   separate, explicitly-named, warned constructor.
+//! * A loud one-time warning is logged the first time this transport is
+//!   used in a process.
+//! * For real networks use the `tls` backend instead.
+
+use std::net::{Ipv4Addr, SocketAddr, TcpListener, TcpStream};
+use std::os::fd::{AsFd, OwnedFd};
+use std::sync::atomic::{AtomicBool, Ordering};
+
+use super::unix::{send_frame_vectored, send_waiting};
+use super::{read_frame, OutQueue, PeerIdentity, ReadDeadline, RpcTransport};
+use crate::rpc::RpcResult;
+
+/// Set on the first `TcpDebugTransport` construction; gates the one-time warning, read by tests.
+static INSECURE_WARNED: AtomicBool = AtomicBool::new(false);
+
+fn warn_once() {
+    if !INSECURE_WARNED.swap(true, Ordering::SeqCst) {
+        log::warn!(
+            "INSECURE plaintext TCP transport — debug/interop only, \
+             NEVER production; use the `tls` backend for real networks"
+        );
+    }
+}
+
+/// `true` once the process-wide insecure warning has been emitted.
+/// Test/diagnostic hook.
+pub fn insecure_warning_emitted() -> bool {
+    INSECURE_WARNED.load(Ordering::SeqCst)
+}
+
+/// A framed transport over a plaintext TCP connection. Debug/interop
+/// only — see the module docs.
+pub struct TcpDebugTransport {
+    stream: TcpStream,
+    desc: String,
+    reads: ReadDeadline,
+    queue: OutQueue,
+}
+
+impl TcpDebugTransport {
+    /// Wrap an accepted/connected `TcpStream` (sets `TCP_NODELAY`).
+    pub fn from_stream(stream: TcpStream) -> RpcResult<Self> {
+        warn_once();
+        // No `MSG_NOSIGNAL` on Apple, as `UnixTransport::from_stream`; EINVAL: both ways shut.
+        #[cfg(target_vendor = "apple")]
+        rustix::net::sockopt::set_socket_nosigpipe(&stream, true).map_err(|e| match e {
+            rustix::io::Errno::INVAL => crate::rpc::RpcError::EndOfStream,
+            e => std::io::Error::from(e).into(),
+        })?;
+        // `RpcError: From<std::io::Error>` — `?` converts directly.
+        stream.set_nodelay(true)?;
+        let desc = match stream.peer_addr() {
+            Ok(a) => format!("tcp_debug:{a}"),
+            Err(_) => "tcp_debug".to_string(),
+        };
+        Ok(TcpDebugTransport {
+            stream,
+            desc,
+            reads: ReadDeadline::default(),
+            queue: OutQueue::default(),
+        })
+    }
+
+    /// Wrap a preconnected `OwnedFd` (the `IAccessor::addConnection()`
+    /// fd-adopt path, `AF_INET` family).
+    /// `std`'s `From<OwnedFd> for TcpStream` is stable cross-platform;
+    /// the caller is responsible for asserting the fd's address family.
+    ///
+    /// The fd must be in blocking mode: a read on an `O_NONBLOCK` fd that
+    /// finds no data returns `RpcError::Timeout` at once. An Accessor fd
+    /// arrives non-blocking; [`crate::rpc::RpcSession::from_preconnected_fd`]
+    /// clears the flag, this does not.
+    pub fn from_owned_fd(fd: OwnedFd) -> RpcResult<Self> {
+        Self::from_stream(TcpStream::from(fd))
+    }
+
+    /// Connect to `addr` (client side). Warns; identity is always
+    /// [`PeerIdentity::Anonymous`].
+    pub fn connect(addr: SocketAddr) -> RpcResult<Self> {
+        let stream = TcpStream::connect(addr)?;
+        Self::from_stream(stream)
+    }
+
+    /// Bind a listener on an ephemeral **loopback** port. The default,
+    /// safe bind. Returns the raw listener for tests / bring-up.
+    pub fn bind_loopback() -> RpcResult<TcpListener> {
+        warn_once();
+        Ok(TcpListener::bind(SocketAddr::from((
+            Ipv4Addr::LOCALHOST,
+            0,
+        )))?)
+    }
+
+    /// Bind a listener on a caller-chosen, possibly **non-loopback**
+    /// address. Separate name + extra warning so a non-loopback bind is
+    /// always an explicit, visible choice (never an accident).
+    pub fn bind_insecure(addr: SocketAddr) -> RpcResult<TcpListener> {
+        warn_once();
+        if !addr.ip().is_loopback() {
+            log::warn!(
+                "tcp_debug bound to NON-loopback {addr} — reachable off-host, \
+                 plaintext, no peer identity; debug/interop ONLY"
+            );
+        }
+        Ok(TcpListener::bind(addr)?)
+    }
+
+    /// Connected loopback pair for hermetic tests (analogous to
+    /// `UnixTransport::pair`): bind ephemeral loopback, connect, accept.
+    pub fn pair_loopback() -> RpcResult<(Self, Self)> {
+        let listener = Self::bind_loopback()?;
+        let addr = listener.local_addr()?;
+        let client = Self::connect(addr)?;
+        let (server_stream, _) = listener.accept()?;
+        let server = Self::from_stream(server_stream)?;
+        Ok((client, server))
+    }
+}
+
+impl RpcTransport for TcpDebugTransport {
+    fn send_frame(&self, buf: &[u8]) -> RpcResult<()> {
+        send_frame_vectored(self.stream.as_fd(), buf, &[])
+    }
+
+    // No fd passing: `fds` reaches only the trait's refusing default.
+    fn send_raw_draining(
+        &self,
+        buf: &[u8],
+        fds: &[std::os::fd::BorrowedFd<'_>],
+        drain: &mut dyn FnMut() -> RpcResult<()>,
+    ) -> RpcResult<()> {
+        if !fds.is_empty() {
+            return self.send_raw_with_fds(buf, fds);
+        }
+        send_waiting(
+            self.stream.as_fd(),
+            &self.queue,
+            &mut [std::io::IoSlice::new(buf)],
+            &[],
+            Some(drain),
+        )
+    }
+
+    fn recv_frame(&self) -> RpcResult<Vec<u8>> {
+        let mut r = &self.stream;
+        read_frame(&mut r)
+    }
+
+    /// Raw, unframed write for the android-13+ profile (the real android
+    /// RPC wire has no length prefix), as `VsockTransport`'s;
+    /// the trait default refuses raw access, which is right only for a
+    /// frame-only backend and wrong here — `RpcSession::from_preconnected_fd`
+    /// wraps an `AF_INET` fd in this transport and goes straight into the
+    /// android-13+ handshake, whose first byte is a raw write.
+    fn send_raw(&self, buf: &[u8]) -> RpcResult<()> {
+        if super::unix::WAITING_SENDS {
+            let slices = &mut [std::io::IoSlice::new(buf)];
+            return send_waiting(self.stream.as_fd(), &self.queue, slices, &[], None);
+        }
+        super::write_raw(&mut &self.stream, buf)
+    }
+
+    /// Raw, unframed read: `read_raw`, shared by the stream backends.
+    fn recv_raw(&self, buf: &mut [u8]) -> RpcResult<usize> {
+        let sock = Some(self.stream.as_fd());
+        self.reads.read(sock, &self.queue, || {
+            super::read_raw(&mut &self.stream, buf)
+        })
+    }
+
+    /// **Always** [`PeerIdentity::Anonymous`]. There is deliberately no
+    /// other return path: plaintext TCP carries no trustworthy peer
+    /// identity, so ACL against it is impossible *by type*.
+    fn peer_identity(&self) -> PeerIdentity {
+        PeerIdentity::Anonymous
+    }
+
+    fn describe(&self) -> &str {
+        &self.desc
+    }
+
+    fn set_read_timeout(&self, timeout: Option<std::time::Duration>) -> RpcResult<()> {
+        self.stream.set_read_timeout(timeout)?;
+        self.reads.note(timeout);
+        Ok(())
+    }
+
+    fn set_write_timeout(&self, timeout: Option<std::time::Duration>) -> RpcResult<()> {
+        self.stream.set_write_timeout(timeout)?;
+        Ok(())
+    }
+
+    fn set_liveness(&self, timeout: Option<std::time::Duration>) -> RpcResult<()> {
+        use std::os::fd::AsFd;
+        super::tcp_liveness(self.stream.as_fd(), timeout)?;
+        Ok(())
+    }
+
+    fn shutdown(&self) -> RpcResult<()> {
+        super::absorb_already_shut(self.stream.shutdown(std::net::Shutdown::Both))
+    }
+
+    fn peer_closed(&self) -> Option<bool> {
+        use std::os::fd::AsFd;
+        super::socket_peer_closed(self.stream.as_fd(), super::SocketKind::TcpOrVsock)
+    }
+
+    fn shutdown_handle(&self) -> Option<Box<dyn FnOnce() + Send>> {
+        super::socket_shutdown_handle(self.stream.as_fd())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Arc;
+
+    #[test]
+    fn tcp_debug_roundtrip_and_safeguards() {
+        let (client, server) = TcpDebugTransport::pair_loopback().expect("loopback pair");
+
+        // Identity is hard-wired Anonymous on both ends.
+        assert_eq!(client.peer_identity(), PeerIdentity::Anonymous);
+        assert_eq!(server.peer_identity(), PeerIdentity::Anonymous);
+        // `insecure_warning_emitted()` is process-global (another test may set it): not asserted.
+
+        let client = Arc::new(client);
+        for size in [0usize, 1, 64 * 1024, 1 << 20] {
+            let payload: Vec<u8> = (0..size).map(|i| (i % 251) as u8).collect();
+            let sender = {
+                let c = client.clone();
+                let p = payload.clone();
+                std::thread::spawn(move || c.send_frame(&p).unwrap())
+            };
+            assert_eq!(server.recv_frame().expect("recv"), payload, "size {size}");
+            sender.join().unwrap();
+        }
+    }
+
+    /// `from_owned_fd` adopt → frame roundtrip over TCP loopback, mirroring the `unix` test.
+    #[test]
+    fn tcp_debug_from_owned_fd_roundtrip() {
+        use std::os::fd::OwnedFd;
+
+        // Connect + accept: the two fds an external bridge would hand us.
+        let listener = TcpDebugTransport::bind_loopback().expect("bind");
+        let addr = listener.local_addr().unwrap();
+        let client_stream = TcpStream::connect(addr).expect("connect");
+        let (server_stream, _) = listener.accept().expect("accept");
+
+        let client_fd: OwnedFd = client_stream.into();
+        let server_fd: OwnedFd = server_stream.into();
+        let client = TcpDebugTransport::from_owned_fd(client_fd).expect("adopt client");
+        let server = TcpDebugTransport::from_owned_fd(server_fd).expect("adopt server");
+
+        let payload = b"hello-accessor-tcp".to_vec();
+        let client = Arc::new(client);
+        let sender = {
+            let c = client.clone();
+            let p = payload.clone();
+            std::thread::spawn(move || c.send_frame(&p).unwrap())
+        };
+        assert_eq!(server.recv_frame().expect("recv"), payload);
+        sender.join().unwrap();
+    }
+
+    /// Plan 2-21: TCP serves the raw (unframed) android-13+ path the trait default refuses.
+    #[test]
+    fn tcp_debug_raw_bytes_roundtrip() {
+        let (client, server) = TcpDebugTransport::pair_loopback().expect("loopback pair");
+        client.send_raw(b"\x01\x02\x03").expect("send_raw");
+        let mut buf = [0u8; 8];
+        let n = server.recv_raw(&mut buf).expect("recv_raw");
+        assert_eq!(&buf[..n], b"\x01\x02\x03");
+    }
+
+    #[test]
+    fn tcp_debug_default_bind_is_loopback() {
+        let l = TcpDebugTransport::bind_loopback().expect("bind");
+        assert!(
+            l.local_addr().unwrap().ip().is_loopback(),
+            "default bind must be loopback"
+        );
+    }
+}
