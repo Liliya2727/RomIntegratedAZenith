@@ -71,6 +71,7 @@ static UID_CACHE: Mutex<BTreeMap<i32, String>> = Mutex::new(BTreeMap::new());
 
 pub(crate) fn set_pm(b: P) { let _ = PM.set(b as usize); }
 
+#[allow(dead_code)]
 pub(crate) fn pm() -> P {
     match PM.get() {
         Some(p) => *p as P,

@@ -2,8 +2,6 @@
 
 use crate::common::log::comp;
 use crate::cmd::settings::utils::*;
-use crate::daemon::applist::init_gamelist;
-
 use std::fs;
 use std::process::Command;
 
@@ -111,11 +109,9 @@ pub fn initialize() {
     write_lock(libs, "/proc/sys/kernel/sched_lib_name");
     write_lock("255", "/proc/sys/kernel/sched_lib_mask_force");
 
-    // First boot: build the gamelist from what the package manager reports, once.
-    // The daemon owns this now that there is no shell script to seed the file;
-    // both re-execs below work without the daemon, and the daemon itself skips
-    // this path entirely once the flag exists.
-    init_gamelist(); // no-op unless GAMELIST_DIR/gamelistloaded is missing
+    // Gamelist is built by the daemon in main() (init_gamelist), where binder
+    // and transaction codes are set up. This subprocess (`profilesettings 0`)
+    // does not have binder initialized, so the scan is intentionally skipped here.
 
     // Both used to be separate binaries on PATH; they are subcommands of the
     // daemon that runs us now (sys.azenith-service).

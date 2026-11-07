@@ -13,7 +13,7 @@ use std::ptr::null_mut;
 use crate::cmd::preload::{self, PRELOAD};
 use crate::common::log::{comp, debug, error, info, level_name, log_init, warn};
 use crate::common::paths::{API_DIR, BASE_DIR, DAEMON_LOCK, GAMELIST_DIR};
-use crate::daemon::applist::{reload_list, watch_list};
+use crate::daemon::applist::{init_gamelist, reload_list, watch_list};
 use crate::daemon::codes::{codes, load_codes, set_codes};
 use crate::daemon::ndk::{call, class, n, service};
 use crate::daemon::observer::{on_am_died, on_observer, set_pm, start as start_observer};
@@ -114,12 +114,18 @@ fn main() {
     unsafe { (n.AParcel_delete)(reply); }
     info!(comp::DAEMON, "IProcessObserver registered with ActivityManager");
 
+    // Build gamelist.txt on first boot. Runs in the main process where binder,
+    // NDK and transaction codes are already set up (see above), so the installed
+    // package scan can actually reach the package manager. Previously this ran
+    // inside `initialize()` via `run_initialize()`, which spawns a subprocess
+    // where `pm()` is null and the scan silently gives up.
+    init_gamelist();
+
     // Boot phase (`profilesettings 0`) first: it seeds the default governor/IO/Mali
     // properties that every profile below resolves its fallback chain from, so a
     // profile applied before it would read empty props and fall back to hardcoded
     // defaults. Before `startThreadPool` because no inbound binder transaction is
-    // dispatched until then — see daemon::profiler::run_initialize. It also fills
-    // `gamelist.txt` on the first boot.
+    // dispatched until then — see daemon::profiler::run_initialize.
     daemon::profiler::run_initialize();
 
     unsafe { (n.ABinderProcess_startThreadPool)(); }

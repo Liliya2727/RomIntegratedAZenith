@@ -21,7 +21,6 @@ use std::collections::BTreeSet;
 
 use crate::common::log::{comp, debug, warn};
 use crate::daemon::ndk::{call, n, str_alloc, P};
-use crate::daemon::observer::pm;
 use crate::daemon::status::service_retry;
 
 /// How many packages must come back before a reply is believed. No real device
@@ -39,11 +38,10 @@ const QUERY: &str = "android.content.pm.IPackageManager.Stub::TRANSACTION_getAll
 /// Every installed package name, or `None` if the package manager could not be
 /// asked at all. Callers retry later rather than treating `None` as "no games".
 pub(crate) fn installed_packages() -> Option<BTreeSet<String>> {
-    let pm = pm();
-    if pm.is_null() {
-        warn!(comp::APPLIST, "package manager not available, cannot scan installed packages");
-        return None;
-    }
+    // `pm` is not used below (only `pm_service` is), so don't require it.
+    // `service_retry()` acquires the binder directly via libbinder_ndk, which
+    // works in any process (n() is lazily initialized). This lets the first-boot
+    // gamelist scan run whether called from the daemon or a subprocess.
     let pm_service = service_retry(c"package", c"android.content.pm.IPackageManager");
     if pm_service.is_null() {
         warn!(comp::APPLIST, "package service not available, cannot scan installed packages");
