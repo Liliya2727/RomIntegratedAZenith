@@ -1,6 +1,9 @@
 [target.aarch64-linux-android]
-# API 34 minimum: rsbinder's thread_state uses process_vm_readv, which bionic
-# only exports from API 23 and which the API 21 wrapper does not resolve.
+# Android 34+ only: rsbinder's thread_state uses process_vm_readv, which bionic
+# only exports from API 23. Link against aarch64-linux-android34-clang so the
+# toolchain headers match the minimum supported platform. rsbinder is vendored
+# and patched to issue the raw syscall (SYS_process_vm_readv = 270 on aarch64)
+# rather than the bionic wrapper.
 linker = "aarch64-linux-android34-clang"
 ar = "llvm-ar"
 
