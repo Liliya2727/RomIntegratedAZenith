@@ -41,11 +41,6 @@ pub fn initialize() {
         }
     }
     
-    // Check if tweaks are disabled
-    if is_tweak_disabled() {
-        return;
-    }
-
     // Initialize CPU governor & renderer. The governor goes through the same
     // resolve/apply path as the balanced profile: `custom_default_cpu_gov` if the
     // user set one, otherwise the kernel baseline is adopted as-is (nothing is

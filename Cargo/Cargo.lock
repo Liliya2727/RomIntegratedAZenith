@@ -38,6 +38,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "azenith-service"
+version = "1.0.0"
+dependencies = [
+ "fs2",
+ "glob",
+ "libc",
+ "rsbinder",
+ "rsbinder-aidl",
+]
+
+[[package]]
 name = "backtrace"
 version = "0.3.76"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -742,17 +753,6 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 3.0.9",
-]
-
-[[package]]
-name = "azenith-service"
-version = "1.0.0"
-dependencies = [
- "fs2",
- "glob",
- "libc",
- "rsbinder",
- "rsbinder-aidl",
 ]
 
 [[package]]

@@ -25,11 +25,6 @@ const TWEAKS: CommonTweaks = CommonTweaks {
 };
 
 pub fn eco_mode() {
-    // 1. Guard
-    if is_tweak_disabled() {
-        return;
-    }
-
     // 2. Governor: save the baseline once, then switch to powersave
     apply_powersave_governor();
 

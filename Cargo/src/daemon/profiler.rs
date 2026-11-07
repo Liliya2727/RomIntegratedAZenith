@@ -37,7 +37,7 @@ static TX: Mutex<Option<mpsc::Sender<u8>>> = Mutex::new(None); // profile worker
 
 /// Service master switch, driven by the AIDL service.
 ///
-/// OFF is NOT `disabletweak`: `is_tweak_disabled()` guards *inside* each profile
+/// Service gate stops the daemon from ever deciding a profile
 /// function, so the daemon still decides and still spawns the subcommand. This
 /// gate stops the daemon from ever deciding a profile — no apply, no subcommand,
 /// no kernel writes at all. The process stays alive and keeps tracking the

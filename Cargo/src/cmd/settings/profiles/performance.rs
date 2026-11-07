@@ -33,11 +33,6 @@ const TWEAKS: CommonTweaks = CommonTweaks {
 };
 
 pub fn performance_profile() {
-    // 1. Guard
-    if is_tweak_disabled() {
-        return;
-    }
-
     let lite_mode = get_litemode();
 
     // 2. Governor: save the baseline once, then switch to performance

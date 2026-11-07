@@ -28,7 +28,7 @@ impl IAZenithService for AZenithService {
     }
 
     fn setServiceEnabled(&self, enabled: bool) -> BinderResult<bool> {
-        // Full service gate, NOT disabletweak. Off = the daemon keeps running and
+        // Full service gate. Off = the daemon keeps running and
         // keeps tracking the foreground app but triggers nothing at all. On =
         // applies immediately. The service stays alive either way; only a reboot
         // (with state=0) stops it.

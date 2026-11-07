@@ -62,7 +62,3 @@ pub(crate) fn get_curprofile() -> String {
         .to_string()
 }
 
-/// Master switch: `persist.sys.azenithIntg.disabletweak = 1` disables every tweak.
-pub(crate) fn is_tweak_disabled() -> bool {
-    getprop("persist.sys.azenithIntg.disabletweak") == "1"
-}

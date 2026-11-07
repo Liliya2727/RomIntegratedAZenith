@@ -32,11 +32,6 @@ const TWEAKS: CommonTweaks = CommonTweaks {
 };
 
 pub fn balanced_profile() {
-    // 1. Guard
-    if is_tweak_disabled() {
-        return;
-    }
-
     // 2. Governor: back to the saved baseline (or custom_default_cpu_gov)
     apply_balanced_governor();
 
