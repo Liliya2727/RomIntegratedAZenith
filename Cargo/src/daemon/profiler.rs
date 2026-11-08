@@ -7,14 +7,12 @@
 use std::collections::BTreeSet;
 use std::ffi::c_char;
 use std::fs;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 use std::sync::Mutex;
 use std::thread;
 use std::time::{Duration, Instant};
 
 use crate::common::log::{comp, debug, info, warn};
-use crate::common::paths::SERVICE_ENABLED_FILE;
 use crate::daemon::state::{saver, screen, write_atomic};
 
 // Digenerate dari Config.toml (lihat Cargo/build.rs dan crate::common::paths).
@@ -31,58 +29,19 @@ static CUR: Mutex<u8> = Mutex::new(0); // 0 = nothing applied yet
 static GRACE: Mutex<Option<Instant>> = Mutex::new(None); // screen-off grace period
 static TX: Mutex<Option<mpsc::Sender<u8>>> = Mutex::new(None); // profile worker
 
-/// Service master switch, driven by the AIDL service.
-///
-/// Service gate stops the daemon from ever deciding a profile. This is a full
-/// stop for tweaks — no apply, no worker queue, no kernel writes at all. The
-/// process stays alive and keeps tracking the foreground app so that enabling
-/// takes effect on the next event.
-static SERVICE: AtomicBool = AtomicBool::new(true);
-
-pub(crate) fn service_enabled() -> bool { SERVICE.load(Ordering::Relaxed) }
-
-/// Persist the last setServiceEnabled value so a reboot restores it without the
-/// app having to call again. The file is the source of truth; the prop only
-/// feeds init.azenith.rc and is the fallback on a first run.
-fn persist_enabled(on: bool) {
-    let v = if on { "1" } else { "0" };
-    if !write_atomic(SERVICE_ENABLED_FILE, v) {
-        warn!(comp::PROFILER, "failed to persist service state to {SERVICE_ENABLED_FILE}");
-    }
-    if !crate::common::android_ffi::prop_set("persist.sys.azenithIntg.state", v) {
-        crate::common::prop::setprop("persist.sys.azenithIntg.state", v);
-    }
-}
-
-fn load_enabled() -> bool {
-    match fs::read_to_string(SERVICE_ENABLED_FILE) {
-        Ok(s) => s.trim() != "0",
-        Err(_) => crate::common::prop::getprop("persist.sys.azenithIntg.state") != "0",
-    }
-}
-
-pub(crate) fn disable_service() {
-    SERVICE.store(false, Ordering::Relaxed);
-    persist_enabled(false);
-    info!(comp::PROFILER, "service disabled (persisted)");
-}
-
-/// Turn the service on and apply immediately, so enabling works now rather than
-/// at the next foreground-app change.
-pub(crate) fn enable_service() {
-    SERVICE.store(true, Ordering::Relaxed);
-    persist_enabled(true);
-    info!(comp::PROFILER, "service enabled (persisted)");
-    force_reapply("service enabled");
+/// Returns true when `persist.sys.azenithIntg.disabletweak` is "1".
+/// When disabled, the profile mode is still decided and written to
+/// `current_profile`, but no sysfs/governor/tweak writes happen — including
+/// the `initialize` boot phase.
+fn disable_tweak() -> bool {
+    crate::common::prop::getprop("persist.sys.azenithIntg.disabletweak") == "1"
 }
 
 // Worker that applies profiles. A profile writes sysfs and forks helper
 // commands, so running it inline would block a binder callback and hold the
 // state lock for the whole run; queue it on a dedicated thread instead.
 pub(crate) fn init() {
-    let enabled = load_enabled();
-    SERVICE.store(enabled, Ordering::Relaxed);
-    info!(comp::PROFILER, "service state restored: enabled={enabled}");
+    info!(comp::PROFILER, "profiler initialized");
     let (tx, rx) = mpsc::channel::<u8>();
     *TX.lock().unwrap_or_else(|e| e.into_inner()) = Some(tx);
     thread::spawn(move || {
@@ -156,6 +115,10 @@ fn write_gameinfo(active: &Option<(String, BTreeSet<i32>)>) {
 // the daemon stays one binary and profile state (governor, debug flags) is
 // shared instead of being lost between re-exec'd children.
 fn run_profile(mode: u8) {
+    if disable_tweak() {
+        info!(comp::PROFILER, "disabletweak=1, skipping profile apply mode={}", mode_name(mode));
+        return;
+    }
     crate::cmd::settings::apply_mode(mode);
 }
 
@@ -215,12 +178,6 @@ pub(crate) fn force_reapply(why: &str) {
 
 // Decide the profile from the current state. Called after every foreground/died/status change.
 pub(crate) fn checkup(active: &Option<(String, BTreeSet<i32>)>, why: &str) {
-    // Service off: track nothing, apply nothing. The daemon stays alive and the
-    // observer keeps updating the active app, so enabling takes effect at once.
-    if !service_enabled() {
-        debug!(comp::PROFILER, "service off, nothing triggered ({why})");
-        return;
-    }
     let cur = *CUR.lock().unwrap_or_else(|e| e.into_inner());
     let screen_off = screen() == "off";
     let saver_on = saver() == "on";

@@ -276,7 +276,7 @@ the libbinder_ndk pool last.
 | Method | Behaviour |
 |---|---|
 | `getApiVersion()` | Returns `1` |
-| `setServiceEnabled(bool)` | Enables/disables the profile engine (persisted to `SERVICE_ENABLED_FILE` + `persist.sys.azenithIntg.state`). Off = daemon keeps tracking but triggers nothing. |
+| `setServiceEnabled(bool)` | Sets `persist.sys.azenithIntg.disabletweak` (inverted: `true` = tweaks on, `false` = tweaks off). Off = daemon keeps tracking but triggers nothing. |
 | `isServiceEnabled()` | Current master switch state |
 | `setConfig(key, value)` | Writes `persist.sys.azenithConfIntg.<key>` via `setprop`. Key must be non-empty alphanumeric/underscore. |
 | `addGame(pkg)` / `removeGame(pkg)` | Add/remove a package from `gamelist.txt` (inotify-triggered reload) |
@@ -297,7 +297,6 @@ All paths are resolved at build time. Defaults:
 | `API_DIR` | `[PATHS] API_DIR` | `API` | relative to BASE_DIR |
 | `DAEMON_LOCK` | `[PATHS] DAEMON_LOCK` | `.lock` | relative to BASE_DIR |
 | `CODES_CACHE` | `[PATHS] CODES_CACHE` | `codes` | relative to BASE_DIR |
-| `SERVICE_ENABLED_FILE` | `[PATHS] SERVICE_ENABLED_FILE` | `service_enabled` | relative to BASE_DIR |
 | `BINDER_RESOLVER_APK` | `[PATHS] BINDER_RESOLVER_APK` | `binder_resolver.apk` | relative to BASE_DIR |
 | `GAMELIST_FILE` | `[PATHS] GAMELIST_FILE` | `gamelist.txt` | relative to GAMELIST_DIR |
 | `CURRENT_PROFILE` | `[PATHS] CURRENT_PROFILE` | `current_profile` | relative to API_DIR |
@@ -320,7 +319,6 @@ Runtime file layout (default `BASE_DIR`):
     device_info.toml      # state store: profile, active_app, screen, saver, zen, battery
   codes.<sdk>.<incremental>   # binder transaction code cache
   .lock                   # single-instance lock
-  service_enabled         # persisted AIDL setServiceEnabled value ("1"/"0")
   binder_resolver.apk     # extracted at runtime by the codes resolver, then removed
 ```
 

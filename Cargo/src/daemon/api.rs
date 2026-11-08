@@ -28,20 +28,15 @@ impl IAZenithService for AZenithService {
     }
 
     fn setServiceEnabled(&self, enabled: bool) -> BinderResult<bool> {
-        // Full service gate. Off = the daemon keeps running and
-        // keeps tracking the foreground app but triggers nothing at all. On =
-        // applies immediately. The service stays alive either way; only a reboot
-        // (with state=0) stops it.
-        if enabled {
-            profiler::enable_service();
-        } else {
-            profiler::disable_service();
-        }
+        // Inverted: setServiceEnabled(true) -> disabletweak=0 (tweaks on),
+        // setServiceEnabled(false) -> disabletweak=1 (tweaks off).
+        let disable = if enabled { "0" } else { "1" };
+        crate::common::prop::setprop("persist.sys.azenithIntg.disabletweak", disable);
         Ok(true)
     }
 
     fn isServiceEnabled(&self) -> BinderResult<bool> {
-        Ok(profiler::service_enabled())
+        Ok(crate::common::prop::getprop("persist.sys.azenithIntg.disabletweak") != "1")
     }
 
     fn setConfig(&self, key: &str, value: &str) -> BinderResult<bool> {

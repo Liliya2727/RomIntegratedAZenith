@@ -210,7 +210,6 @@ Default directory structure:
 ```
 BASE_DIR/                          # /data/vendor/AZenithInt (default)
 ├── .lock                          # instance lock (DAEMON_LOCK)
-├── service_enabled                # persisted setServiceEnabled ("1"/"0")
 ├── codes.<sdk>.<incremental>      # binder transaction code cache (CODES_CACHE)
 ├── binder_resolver.apk            # extracted from the binary at runtime, then deleted
 ├── gamelist/
@@ -226,7 +225,7 @@ BASE_DIR/                          # /data/vendor/AZenithInt (default)
 | File | Produced by | Contents / meaning |
 |---|---|---|
 | `.lock` | Daemon (`main.rs`) | Exclusive instance lock so only one daemon runs at a time. |
-| `service_enabled` | AIDL `setServiceEnabled()` | Last master switch value ("1" = on, "0" = off), restored after reboot. |
+| `disabletweak` (prop) | `persist.sys.azenithIntg.disabletweak` | `1` = block all tweaks (profile still decided, no sysfs/governor writes), `0` = normal tweak apply. Read at runtime by `daemon::profiler`. |
 | `codes.<sdk>.<incremental>` | `daemon::codes` | Binder transaction code cache per SDK/build so the resolver APK does not need to run on every boot. |
 | `binder_resolver.apk` | Extracted from binary (`include_bytes!`) | Used once to resolve transaction codes, then deleted. |
 | `gamelist/gamelist.txt` | `daemon::applist` (first boot) / user | One package name per line. Watched via inotify; changes automatically when edited. |
