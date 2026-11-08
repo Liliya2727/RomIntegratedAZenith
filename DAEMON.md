@@ -50,7 +50,7 @@ Runtime behaviour is driven by system properties under
 
 ```
 Cargo/
-├── Cargo.toml              # crate manifest: azenith-service 1.0.0, edition 2024
+├── Cargo.toml              # crate manifest: azenith-service 3.0.0, edition 2024
 ├── Cargo.lock
 ├── build.rs                # build-time config + AIDL binding generation
 ├── binder_resolver.apk     # embedded resolver APK (staged by build_binary.sh)
@@ -253,7 +253,7 @@ File: `Cargo/aidl/vendor/azenith/IAZenithService.aidl`
 package vendor.azenith;
 
 interface IAZenithService {
-    const int VERSION = 1;
+    const int VERSION = 3;
 
     int getApiVersion();
     boolean setDisabled(boolean disabled);

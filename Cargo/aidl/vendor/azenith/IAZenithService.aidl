@@ -1,7 +1,7 @@
 package vendor.azenith;
 
 interface IAZenithService {
-    const int VERSION = 1;
+    const int VERSION = 3;
 
     int getApiVersion();
     boolean setDisabled(boolean disabled);
