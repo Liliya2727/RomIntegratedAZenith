@@ -46,9 +46,10 @@ Every mode change re-anchors balanced to the governor the kernel was on between 
 `balanced -> performance -> balanced` cycle is a no-op for the governor; it only diverges if
 something else changes the governor while a mode is active.
 
-The saved governor lives in the daemon memory only: it is not a property and not a file, so it is
-lost when the service restarts. After a restart the first `balanced` apply simply adopts whatever
-governor the kernel is on.
+The saved governor is stored in `API/saved_governor` so it survives a daemon restart. The file is
+tagged with the kernel boot ID, so a value left over from a previous boot is ignored and the first
+`balanced` apply after a reboot still adopts whatever governor the kernel is on. A service restart
+within the same boot keeps the saved baseline.
 
 There is no auto-detected `default_cpu_gov` property any more — the governor the daemon finds is kept
 in its own state, not written to a property. Any `persist.azenith.default_cpu_gov` left over from an

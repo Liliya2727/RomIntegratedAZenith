@@ -110,13 +110,12 @@ pub fn initialize() {
     write_lock("255", "/proc/sys/kernel/sched_lib_mask_force");
 
     // Gamelist is built by the daemon in main() (init_gamelist), where binder
-    // and transaction codes are set up. This subprocess (`profilesettings 0`)
-    // does not have binder initialized, so the scan is intentionally skipped here.
+    // and transaction codes are set up; it stays out of this boot phase.
 
-    // Both used to be separate binaries on PATH; they are subcommands of the
-    // daemon that runs us now (sys.azenith-service).
-    let _ = crate::cmd::command(crate::cmd::UTILITYCONF).arg("FSTrim").status();
-    let _ = crate::cmd::command(crate::cmd::PREFERENCEDTWEAKS).status();
+    // Both used to be separate binaries on PATH. They are plain modules now,
+    // so the daemon calls them in-process instead of re-exec'ing itself.
+    crate::cmd::utility::trim();
+    crate::cmd::prefs::apply();
 
     // Final Sync & Logs
     let _ = Command::new("sync").status();

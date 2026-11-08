@@ -14,8 +14,9 @@
 //! | `state` | `state.toml`, the state store |
 //! | `profiler` | `profile/*.c` — profile switching |
 //!
-//! Its companion commands (`sys.azenith-service profilesettings ...` and
-//! friends) live in [`crate::cmd`], the shared plumbing in [`crate::common`].
+//! The profiler engine and the other companion tools live in [`crate::cmd`] as
+//! modules of this same binary; the daemon calls them directly instead of
+//! spawning helper processes. Shared plumbing lives in [`crate::common`].
 
 pub(crate) mod applist;
 pub(crate) mod api;

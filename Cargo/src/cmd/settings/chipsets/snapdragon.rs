@@ -123,13 +123,17 @@ pub fn snapdragon_balance() {
 }
 
 pub fn snapdragon_performance() {
-    // devfreq & bus DCVS glob scanning runs on a separate thread so the
-    // device does not lag; the write order still matches the other profiles.
-    thread::spawn(|| apply_devfreq_governors(&PERFORMANCE_DEVFREQ_GOVS));
-    thread::spawn(|| apply_bus_dcvs(BusBound::Max, BusBound::Max));
+    // devfreq & bus DCVS glob scanning runs on separate threads so the two
+    // scans overlap; join them before returning so a profile apply cannot leave
+    // writes running into the next one.
+    let devfreq = thread::spawn(|| apply_devfreq_governors(&PERFORMANCE_DEVFREQ_GOVS));
+    let bus = thread::spawn(|| apply_bus_dcvs(BusBound::Max, BusBound::Max));
 
     apply_gpu_core_clock(GpuBound::Highest, GpuBound::Highest);
     write_lock("3", &format!("{}/adrenoboost", GPU_PATH));
+
+    let _ = devfreq.join();
+    let _ = bus.join();
 }
 
 pub fn snapdragon_powersave() {

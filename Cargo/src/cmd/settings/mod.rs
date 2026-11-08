@@ -14,8 +14,12 @@
 // limitations under the License.
 //
 
-//! `sys.azenith-service profilesettings <action>` — the profiler that used to
-//! live in the standalone `binprofiles` crate (`sys.azenith-profilesettings`).
+//! Profile engine: the functions that used to live in the standalone
+//! `binprofiles` crate (`sys.azenith-profilesettings`).
+//!
+//! The daemon calls [`apply_mode`] directly from its worker thread; the
+//! `profilesettings` subcommand remains as a thin CLI wrapper around the same
+//! functions for manual/debug use.
 
 mod chipsets;
 mod profiles;
@@ -26,14 +30,22 @@ use std::process::Command;
 use profiles::*;
 use utils::*;
 
-/// Run the profiler. `args` are the arguments *after* the subcommand name
-/// (`sys.azenith-service profilesettings <action> ...`).
+/// CLI entry point for `sys.azenith-service profilesettings <action> ...`.
 pub(crate) fn run(args: &[String]) {
     if !crate::cmd::verify_caller() {
         eprintln!("\x1b[31mError: This utility can only be called by sys.azenith-service\x1b[0m");
         std::process::exit(1);
     }
+    run_action(args);
+}
 
+/// In-process entry used by the daemon profiler. `mode` is the same number the
+/// CLI accepts: 0 = initialize, 1 = performance, 2 = balanced, 3 = eco.
+pub(crate) fn apply_mode(mode: u8) {
+    run_action(&[mode.to_string()]);
+}
+
+fn run_action(args: &[String]) {
     let Some(action) = args.first() else { return };
 
     match action.as_str() {

@@ -122,25 +122,21 @@ pub fn apply_common_tweaks(tweaks: &CommonTweaks) {
         }
     }
 
-    // Queue block I/O
+    // Queue block I/O. This runs on the profiler worker, so write it inline:
+    // a detached thread could outlive the profile and overwrite the next one.
     if let Some(block_io) = tweaks.block_io {
-        let read_ahead_kb = block_io.read_ahead_kb;
-        let nr_requests = block_io.nr_requests;
-
-        std::thread::spawn(move || {
-            if let Ok(paths) = glob::glob("/sys/block/*") {
-                for path in paths.flatten() {
-                    if let Some(file_name) = path.file_name().and_then(|n| n.to_str()) {
-                        if file_name == "mmcblk0" || file_name == "mmcblk1" || file_name.starts_with("sd") {
-                            if let Some(p_str) = path.to_str() {
-                                write_lock(read_ahead_kb, &format!("{}/queue/read_ahead_kb", p_str));
-                                write_lock(nr_requests, &format!("{}/queue/nr_requests", p_str));
-                            }
+        if let Ok(paths) = glob::glob("/sys/block/*") {
+            for path in paths.flatten() {
+                if let Some(file_name) = path.file_name().and_then(|n| n.to_str()) {
+                    if file_name == "mmcblk0" || file_name == "mmcblk1" || file_name.starts_with("sd") {
+                        if let Some(p_str) = path.to_str() {
+                            write_lock(block_io.read_ahead_kb, &format!("{}/queue/read_ahead_kb", p_str));
+                            write_lock(block_io.nr_requests, &format!("{}/queue/nr_requests", p_str));
                         }
                     }
                 }
             }
-        });
+        }
     }
 }
 

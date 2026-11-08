@@ -72,6 +72,7 @@ const FILE_KEYS: &[(&str, &str, &str)] = &[
     ("GAMELIST_FILE", "gamelist.txt", "GAMELIST_DIR"),
     ("CURRENT_PROFILE", "current_profile", "API_DIR"),
     ("GAMEINFO", "gameinfo", "API_DIR"),
+    ("SAVED_GOVERNOR", "saved_governor", "API_DIR"),
 ];
 
 /// `[DEVICE] SOC` — the SoC family whose tweaks get applied. `none` = no chipset

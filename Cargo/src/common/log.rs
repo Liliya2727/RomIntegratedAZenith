@@ -52,7 +52,6 @@ pub(crate) mod comp {
     pub(crate) const PROFILER: &str = "daemon.profiler";
 
     // cmd.<command>.<subsystem>: the companion commands.
-    pub(crate) const CMD: &str = "cmd";
     pub(crate) const PRELOAD: &str = "cmd.preload";
     pub(crate) const SETTINGS_CPU: &str = "cmd.settings.cpu";
     pub(crate) const SETTINGS_RENDERER: &str = "cmd.settings.renderer";

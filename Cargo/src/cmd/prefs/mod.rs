@@ -14,9 +14,11 @@
 // limitations under the License.
 //
 
-//! `sys.azenith-service preferencedtweaks [apply|prefs|preferenced]` — the
-//! preference tweaks that used to live in the standalone `binpreferenced`
+//! Preference tweaks that used to live in the standalone `binpreferenced`
 //! crate (`sys.azenith-preferencedtweaks`).
+//!
+//! The daemon calls [`apply`] directly during its initialize phase; the
+//! `preferencedtweaks` subcommand remains as a thin CLI wrapper for manual use.
 
 mod tweaks;
 mod utils;
@@ -26,14 +28,22 @@ use std::process::Command;
 use tweaks::*;
 use utils::*;
 
-/// Run the tweaks. `args` are the arguments *after* the subcommand name
-/// (`sys.azenith-service preferencedtweaks [action] ...`).
+/// CLI entry point for
+/// `sys.azenith-service preferencedtweaks [action] ...`.
 pub(crate) fn run(args: &[String]) {
     if !crate::cmd::verify_caller() {
         eprintln!("\x1b[31mError: This utility can only be called by sys.azenith-service\x1b[0m");
         std::process::exit(1);
     }
+    run_action(args);
+}
 
+/// In-process entry used by the daemon's initialize phase.
+pub(crate) fn apply() {
+    run_action(&[]);
+}
+
+fn run_action(args: &[String]) {
     init_debugmode();
 
     match args.first().map(String::as_str) {

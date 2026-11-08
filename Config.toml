@@ -75,6 +75,9 @@ GAMELIST_FILE = "gamelist.txt"
 CURRENT_PROFILE = "current_profile"
 # Foreground package, "<pkg> <pid> <uid>" plus a timestamp.
 GAMEINFO = "gameinfo"
+# Governor saved before performance/eco, restored by balanced. Tagged with the
+# boot ID so a value from a previous boot is ignored.
+SAVED_GOVERNOR = "saved_governor"
 # State store for other instances (profile, active app, screen/saver/zen,
 # battery). Sits in API_DIR next to CURRENT_PROFILE and GAMEINFO, so every
 # runtime state file lives in one place.

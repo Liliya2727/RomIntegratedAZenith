@@ -14,13 +14,21 @@
 // limitations under the License.
 //
 
-//! `sys.azenith-service utilityconf <function>` — the system tweaks that used
-//! to live in the standalone `binutils` crate (`sys.azenith-utilityconf`).
+//! System tweaks that used to live in the standalone `binutils` crate
+//! (`sys.azenith-utilityconf`).
+//!
+//! The daemon calls [`trim`] directly during its initialize phase; the
+//! `utilityconf` subcommand remains as a thin CLI wrapper for manual use.
 
 mod utils;
 
 use std::process::Command;
 use utils::*;
+
+/// In-process entry used by the daemon's initialize phase.
+pub(crate) fn trim() {
+    fstrim();
+}
 
 /// Run one utility function. `args` are the arguments *after* the subcommand
 /// name (`sys.azenith-service utilityconf <function> ...`).

@@ -223,26 +223,42 @@ pub(crate) fn watch_processes() {
     thread::spawn(|| loop {
         thread::sleep(Duration::from_millis(1500));
         let apps = scan_apps();
-        let top = apps.iter().find(|a| a.adj == 0);
-        if let Some(top) = top {
-            let mut g = st();
-            let s = &mut *g;
-            let current_fg = s.focused.as_ref().map(|(p, _, _)| p.clone());
-            if current_fg.as_deref() != Some(&top.pkg) {
+
+        let mut g = st();
+        let s = &mut *g;
+
+        // AMS is the authority for the foreground app. oom_score_adj is only a
+        // hint here: on some ROMs a background app can sit at 0 while a game is
+        // at 100/200, so never let this poller replace a live AMS focus.
+        let focused_alive = s.focused.as_ref()
+            .map(|(_, pid, _)| apps.iter().any(|a| a.pid == *pid))
+            .unwrap_or(false);
+        if !focused_alive {
+            s.focused = None;
+        }
+
+        // Recover only when AMS has not told us anything yet (startup or the
+        // focused process died) and exactly one app claims the top slot. With
+        // several adj==0 processes the result is ambiguous; leave it to AMS.
+        if s.focused.is_none() && s.active.is_none() {
+            let mut top = apps.iter().filter(|a| a.adj == 0);
+            if let (Some(a), None) = (top.next(), top.next()) {
+                let (pkg, pid, uid) = (a.pkg.clone(), a.pid, a.uid);
                 drop(g);
-                set_focused(&top.pkg, top.pid, top.uid, "process poller");
+                set_focused(&pkg, pid, uid, "process poller: recovery");
                 continue;
             }
         }
-        // If an active game is set, verify its processes are still foreground
-        let mut g = st();
-        let s = &mut *g;
+
+        // If an active game is set, only catch the case where every process
+        // belonging to it has actually died. Leaving the game is reported by
+        // AMS; checking adj here used to clear the profile on ROMs that keep a
+        // game at a non-zero adj while it is on screen.
         if let Some((ref game_pkg, ref pids)) = s.active {
-            let still_fg = apps.iter().any(|a| a.pkg == *game_pkg && a.adj <= 200 && pids.contains(&a.pid));
-            if !still_fg && !apps.iter().any(|a| a.pkg == *game_pkg && pids.contains(&a.pid)) {
+            if !apps.iter().any(|a| a.pkg == *game_pkg && pids.contains(&a.pid)) {
                 let pkg = game_pkg.clone();
                 s.active = None;
-                info!(comp::STATE, "active game {pkg} is no longer running in foreground");
+                info!(comp::STATE, "active game {pkg} is no longer running");
                 apply(s, "process poller: game gone");
             }
         }

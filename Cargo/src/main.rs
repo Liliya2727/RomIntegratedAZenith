@@ -41,8 +41,10 @@ fn main() {
     // this their DEBUG lines were dropped by the default Info level.
     log_init();
 
-    // Companion commands first: they run as the same binary but in their own
-    // process, so nothing below (root check, instance lock, binder) applies.
+    // CLI subcommands first: when invoked as `... profilesettings ...` the
+    // binary acts as that tool and exits, so nothing below (root check,
+    // instance lock, binder) applies. The daemon path calls the same modules
+    // directly, without re-exec'ing itself.
     if let Some(name) = args.first().and_then(|a| subcommand(a)) {
         let rest = &args[1..];
         match name {
@@ -116,12 +118,10 @@ fn main() {
 
     // Build gamelist.txt on first boot. Runs in the main process where binder,
     // NDK and transaction codes are already set up (see above), so the installed
-    // package scan can actually reach the package manager. Previously this ran
-    // inside `initialize()` via `run_initialize()`, which spawns a subprocess
-    // where `pm()` is null and the scan silently gives up.
+    // package scan can actually reach the package manager.
     init_gamelist();
 
-    // Boot phase (`profilesettings 0`) first: it seeds the default governor/IO/Mali
+    // Boot phase (profile mode 0) first: it seeds the default governor/IO/Mali
     // properties that every profile below resolves its fallback chain from, so a
     // profile applied before it would read empty props and fall back to hardcoded
     // defaults. Before `startThreadPool` because no inbound binder transaction is
@@ -130,7 +130,7 @@ fn main() {
 
     unsafe { (n.ABinderProcess_startThreadPool)(); }
     daemon::api::start_binder_server(); // hosted AIDL service via rsbinder
-    daemon::profiler::init(); // worker that applies profiles via the profilesettings subcommand
+    daemon::profiler::init(); // worker thread that applies profiles in-process
     init_status(); // register binder callbacks (screen/saver/zen) + read initial status
     seed(); // process table + initial state (profile 1/2/3, or 2/NULL if no game is on screen)
     watch_processes(); // periodic process verification to prevent any missed events
