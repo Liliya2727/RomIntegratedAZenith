@@ -1,4 +1,4 @@
-# AZenith Service — Full Docs
+# AZenith Service 
 
 Complete technical reference for the AZenith daemon (`vendor.azenith-service`) and how to integrate it into a custom ROM vendor image.
 
