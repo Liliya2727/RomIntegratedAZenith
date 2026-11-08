@@ -218,11 +218,6 @@ pub(crate) fn seed() {
     apply(s, "startup");
 }
 
-pub(crate) fn scan_foreground(list: &BTreeSet<String>) -> Option<(i32, String)> {
-    let apps = scan_apps();
-    apps.into_iter().find(|a| a.adj == 0 && list.contains(&a.pkg)).map(|a| (a.pid, a.pkg))
-}
-
 pub(crate) fn adopt(why: &str) {
     let mut g = st();
     let s = &mut *g;

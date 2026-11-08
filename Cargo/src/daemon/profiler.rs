@@ -12,7 +12,7 @@ use std::sync::Mutex;
 use std::thread;
 use std::time::{Duration, Instant};
 
-use crate::common::log::{comp, debug, info, warn};
+use crate::common::log::{comp, debug, info};
 use crate::daemon::state::{saver, screen, write_atomic};
 
 // Digenerate dari Config.toml (lihat Cargo/build.rs dan crate::common::paths).
@@ -162,18 +162,6 @@ fn broadcast_profile_change(mode: u8, active: &Option<(String, BTreeSet<i32>)>) 
     std::thread::spawn(move || {
         let _ = crate::common::shell::system(comp::PROFILER, &cmd);
     });
-}
-
-/// Force a re-apply even when the mode has not changed, so a config change made
-/// through the AIDL service takes effect now instead of at the next app switch.
-pub(crate) fn force_reapply(why: &str) {
-    *CUR.lock().unwrap_or_else(|e| e.into_inner()) = 0;
-    let mut g = crate::daemon::state::st();
-    let s = &mut *g;
-    if s.active.is_none() {
-        s.active = crate::daemon::state::scan_foreground(&s.list).map(|(pid, pkg)| (pkg, BTreeSet::from([pid])));
-    }
-    crate::daemon::state::apply(s, why);
 }
 
 // Decide the profile from the current state. Called after every foreground/died/status change.

@@ -12,7 +12,7 @@ use vendor::azenith::IAZenithService::{BnAZenithService, IAZenithService};
 
 use crate::common::log::{comp, error, info};
 use crate::common::paths::STATE_FILE;
-use crate::daemon::{applist, profiler};
+use crate::daemon::applist;
 
 pub(crate) const IFACE_VERSION: i32 = 1;
 
