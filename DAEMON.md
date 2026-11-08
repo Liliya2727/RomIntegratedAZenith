@@ -1,0 +1,727 @@
+# AZenith Service Documentations
+
+Complete service documentation for `vendor.azenith-service`, the system-level
+performance daemon for Android custom ROMs.
+
+This document describes the **Cargo (Rust) service binary** under `Cargo/` —
+what it does, how it is built, how it is integrated into a vendor image, what
+properties it reads, what AIDL interface it exposes, and how its profile engine
+applies CPU/GPU/I/O tweaks.
+
+> Companion project notes: this repo also ships an Android `Resolver` (the
+> binder transaction-code resolver APK embedded into the service binary),
+> sepolicy files (`azenith_sepolicy.cil`, `vendor_sepolicy.cil`), and an init
+> service file (`init.azenith.rc`). Those are referenced where relevant but are
+> not part of the Rust crate itself.
+
+---
+
+## 1. Overview
+
+AZenith is a single, self-contained vendor service binary
+(`/vendor/bin/hw/vendor.azenith-service`) launched by Android `init` through
+`init.azenith.rc`. It runs as root, tracks the foreground application through
+the framework's `IProcessObserver` binder callback, and applies CPU/GPU/I/O
+performance profiles to game packages listed in `gamelist.txt`.
+
+There are no separate helper binaries anymore. Everything that used to live in
+`sys.azenith-profilesettings`, `sys.azenith-utilityconf`,
+`sys.azenith-preferencedtweaks` and `sys.azenith-preloadbin` is now a module of
+this one binary, exposed as subcommands (`profilesettings`, `utilityconf`,
+`preferencedtweaks`, `preload`).
+
+Runtime behaviour is driven by system properties under
+`persist.sys.azenithIntg.*` (daemon state) and `persist.sys.azenithConfIntg.*`
+(tweak toggles), plus files under `BASE_DIR` (default
+`/data/vendor/AZenithInt/`).
+
+| Capability | Detail |
+|---|---|
+| **Profile modes** | `0` initialize, `1` performance, `2` balanced, `3` eco |
+| **SoC families** | `none`, `mediatek`, `snapdragon`, `exynos`, `unisoc`, `tensor` |
+| **AIDL service** | `vendor.azenith.IAZenithService/default` (version 1) |
+| **Logcat tag** | `AZenith` (`adb logcat -s AZenith`) |
+| **Target** | `aarch64-linux-android` (Android 34+) |
+| **Root required** | Yes (`getuid() == 0`), single instance via lock file |
+
+---
+
+## 2. Project layout (Cargo crate)
+
+```
+Cargo/
+├── Cargo.toml              # crate manifest: azenith-service 1.0.0, edition 2024
+├── Cargo.lock
+├── build.rs                # build-time config + AIDL binding generation
+├── binder_resolver.apk     # embedded resolver APK (staged by build_binary.sh)
+├── .cargo/config.toml      # aarch64-linux-android34-clang linker, target
+├── aidl/
+│   └── vendor/azenith/IAZenithService.aidl   # single source of truth for the AIDL interface
+├── src/
+│   ├── main.rs             # daemon entry point + CLI subcommand dispatch
+│   ├── common/             # shared helpers (log, prop, fs, shell, paths, cpugov, android_ffi)
+│   ├── daemon/             # binder engine: api, observer, status, state, profiler, codes, ndk, applist, apps, procs
+│   └── cmd/                # companion commands: settings, prefs, utility, preload
+│       ├── settings/       # profile engine (profiles, chipsets, utils)
+│       ├── prefs/          # preference tweaks (JIT, WALT, FPSGO/GED, SFL, thermal, trace, logd…)
+│       ├── utility/        # fstrim, DND, refresh rates, renderer, governor, restart-service…
+│       └── preload/        # vmtouch-like page-cache preloader
+└── vendor/rsbinder/        # vendored rsbinder 0.12.0 (patched for raw process_vm_readv syscall)
+```
+
+### Module map
+
+| Crate module | Responsibility |
+|---|---|
+| `daemon::api` | Hosts the `IAZenithService` AIDL interface via rsbinder |
+| `daemon::observer` | `IProcessObserver` callbacks: foreground, process started/died |
+| `daemon::status` | Screen, battery saver, zen mode, battery level/charging (binder polling) |
+| `daemon::state` | `state.toml` store, process table, active-app tracking |
+| `daemon::profiler` | Profile mode decision + worker thread that applies profiles |
+| `daemon::codes` | Resolves binder transaction codes from the embedded resolver APK |
+| `daemon::ndk` | `libbinder_ndk.so` via `dlsym` (raw binder transactions) |
+| `daemon::applist` | `gamelist.txt` parse/write/reload + inotify watcher |
+| `daemon::apps` | Installed-game scan via the resolver APK (`CATEGORY_GAME`) |
+| `daemon::procs` | `/proc` process table scan (pid, pkg, uid, oom_score_adj) |
+| `cmd::settings` | Profile engine: initialize / performance / balanced / eco |
+| `cmd::prefs` | Preference tweaks: JIT, schedutil/WALT, FPSGO/GED, Mali, SFL, thermal, trace, logd |
+| `cmd::utility` | fstrim, DND, refresh rates, renderer, custom governor, restart service |
+| `cmd::preload` | Page-cache preloader (touch mode only, vmtouch-compatible output) |
+| `common::log` | Logcat writer, tag `AZenith`, components `[daemon.*]`, `[cmd.*]`, `[common.*]` |
+| `common::prop` | `getprop`/`setprop`/`resetprop` wrappers |
+| `common::paths` | Compile-time path constants generated by `build.rs` from `Config.toml` |
+| `common::fs` | Sysfs/procfs write + lock (`write_val`, `write_lock`, `write_unlock`) |
+| `common::shell` | Forked `/system/bin/sh` for `vdc`/`cmd`/`am`/`sm` |
+| `common::cpugov` | Saved-governor bookkeeping (boot-ID tagged, `API/saved_governor`) |
+
+---
+
+## 3. Build
+
+### 3.1 Prerequisites
+
+* Android NDK toolchain providing `aarch64-linux-android34-clang` and `llvm-ar`.
+* The Binder Resolver APK built from `Resolver/` (Gradle) and staged at
+  `Cargo/binder_resolver.apk` before `cargo` runs.
+
+### 3.2 Configure before building
+
+Edit `Config.toml` (repo root) **before building**. Every runtime path is baked
+into the binary at compile time by `Cargo/build.rs` into `$OUT_DIR/paths.rs`,
+so nothing is hardcoded in the Rust sources.
+
+```toml
+[DEVICE]
+SOC = "mediatek"   # mediatek | snapdragon | exynos | unisoc | tensor | none
+
+[PATHS]
+BASE_DIR = "/data/vendor/AZenithInt"
+GAMELIST_DIR = "gamelist"      # relative to BASE_DIR
+API_DIR    = "API"             # relative to BASE_DIR
+```
+
+Path rules (enforced by `build.rs`):
+* A value starting with `/` is absolute and used as-is.
+* Any other value is relative to its parent directory (`GAMELIST_DIR` -> `BASE_DIR`, `GAMELIST_FILE` -> `GAMELIST_DIR`, etc.).
+* An empty string `""` means "use the parent path".
+* `BASE_DIR` must be absolute; otherwise the default is used and a `cargo:warning` is printed.
+* `build.rs` validates every resolved path falls back to its default when invalid.
+
+The `[DEVICE] SOC` value selects the chipset-specific tweak set compiled into
+the binary. One binary carries exactly one SoC set. `none` applies only the
+generic (non-chipset) tweaks. Legacy numeric values `0`–`5` (from the old
+`soctype` prop) are accepted and normalized with a build warning.
+
+### 3.3 Compile
+
+Use `build_binary.sh` (it also builds the resolver APK):
+
+```sh
+./build_binary.sh             # release build
+./build_binary.sh --debug     # debug build
+./build_binary.sh --clean     # clean target first
+./build_binary.sh --output /path/to/staging
+```
+
+The release profile (`Cargo.toml`) is optimised for size with LTO, a single
+codegen unit, `panic = 'abort'` and symbol stripping:
+
+```toml
+[profile.release]
+opt-level = 'z'
+lto = true
+codegen-units = 1
+panic = 'abort'
+strip = true
+```
+
+Output: `output/vendor.azenith-service` — the binary to drop into the vendor
+image.
+
+### 3.4 Dependencies
+
+Runtime: `fs2`, `libc`, `glob`, `rsbinder = 0.12.0` (feature `android_14`).
+Build-time: `rsbinder-aidl = 0.12.0`.
+
+`rsbinder` is vendored under `Cargo/vendor/rsbinder` and patched via
+`[patch.crates-io]` so it issues the raw `process_vm_readv` syscall instead of
+the bionic wrapper (Android's bionic only exports it from API 23; the project
+targets API 34+).
+
+The AIDL interface is generated at build time from
+`Cargo/aidl/vendor/azenith/IAZenithService.aidl` into `$OUT_DIR/bindings.rs`.
+Declaration order in the `.aidl` file equals transaction order — append new
+methods to the end only.
+
+---
+
+## 4. Vendor integration
+
+### 4.1 Install the binary and init script
+
+1. Copy `output/vendor.azenith-service` to
+   `/vendor/bin/hw/vendor.azenith-service` (must match the service name in
+   `init.azenith.rc`).
+2. Copy `init.azenith.rc` to `/vendor/etc/init/`.
+3. Patch the vendor sepolicy — see section 11 and `sepolicyguide.md`.
+4. In `/vendor/build.prop`, add:
+   ```
+   persist.sys.azenithIntg.state=1   # 1 = enabled, 0 = disabled
+   ```
+5. Enable tweaks via the properties listed in section 8 / `listproperties.md`.
+6. Repack the vendor image.
+
+### 4.2 init.azenith.rc
+
+```rc
+service AZenith /vendor/bin/hw/vendor.azenith-service
+    seclabel u:r:azenith_service:s0
+    class main
+    user root
+    group root system shell readproc sdcard_r sdcard_rw media_rw
+    capabilities SYS_NICE DAC_OVERRIDE KILL SYS_ADMIN NET_ADMIN SYS_PTRACE
+    disabled
+    socket zygote stream 660 root system
+
+on property:sys.boot_completed=1 && property:persist.sys.azenithIntg.state=1
+    start AZenith
+```
+
+The service starts on boot when `sys.boot_completed=1` **and**
+`persist.sys.azenithIntg.state=1`. It is otherwise `disabled`.
+
+---
+
+## 5. Startup sequence (`src/main.rs`)
+
+When launched with no subcommand arguments, the daemon runs this sequence:
+
+1. `log_init()` — reads `LIBBINDING_LOG` / `persist.sys.azenithIntg.debugmode`
+   to set the log level.
+2. CLI subcommand dispatch — if the first argument is a known subcommand name
+   (or legacy binary name), the binary acts as that tool and exits before any
+   root check, lock, or binder setup.
+3. Root check — exits with `run as root` when `getuid() != 0`.
+4. Creates `BASE_DIR`, `API_DIR`, `GAMELIST_DIR`.
+5. Takes an exclusive lock on `DAEMON_LOCK` (second instance exits).
+6. Loads binder transaction codes from the embedded resolver APK
+   (`daemon::codes::load_codes`), caches them under `CODES_CACHE`.
+7. Loads and watches `gamelist.txt` (`applist::reload_list` + `watch_list`).
+8. Resolves `activity`/`IActivityManager` and `package`/`IPackageManager`
+   services via `libbinder_ndk`; registers a death recipient on ActivityManager
+   (exits if AMS dies, so `init` restarts the service).
+9. Starts the `IProcessObserver` binder observer and registers it with AMS
+   (`registerProcessObserver`).
+10. Runs `initialize` (mode 0) — boot-phase governor/IO/Mali/thermal/VM/kernel
+    tweaks **before** the binder thread pool starts.
+11. Starts the libbinder_ndk thread pool, then starts the rsbinder AIDL server
+    (`daemon::api::start_binder_service`), then starts the profiler worker
+    thread.
+12. Registers status callbacks (screen/saver/zen/battery) and reads initial
+    status (`status::init_status`).
+13. Seeds the process table and initial state (`state::seed`).
+14. Starts the periodic process verifier (`state::watch_processes`, 1.5s).
+15. Joins the thread pool — "ready, waiting for callbacks from AMS".
+
+---
+
+## 6. AIDL service interface
+
+File: `Cargo/aidl/vendor/azenith/IAZenithService.aidl`
+
+```aidl
+package vendor.azenith;
+
+interface IAZenithService {
+    const int VERSION = 1;
+
+    int getApiVersion();
+    boolean setServiceEnabled(boolean enabled);
+    boolean setConfig(in String key, in String value);
+    boolean addGame(in String pkg);
+    boolean removeGame(in String pkg);
+    String getGames();
+    String getState();
+    void applyNow();
+    boolean isServiceEnabled();
+}
+```
+
+Registered as `vendor.azenith.IAZenithService/default` by rsbinder, with its
+own `ProcessState` and thread pool (separate from the daemon's libbinder_ndk
+pool). `init_default()` must run before `add_service`/`start_thread_pool`; only
+`start_thread_pool` is called (not `join_thread_pool`), because `main()` joins
+the libbinder_ndk pool last.
+
+| Method | Behaviour |
+|---|---|
+| `getApiVersion()` | Returns `1` |
+| `setServiceEnabled(bool)` | Enables/disables the profile engine (persisted to `SERVICE_ENABLED_FILE` + `persist.sys.azenithIntg.state`). Off = daemon keeps tracking but triggers nothing. |
+| `isServiceEnabled()` | Current master switch state |
+| `setConfig(key, value)` | Writes `persist.sys.azenithConfIntg.<key>` via `setprop`. Key must be non-empty alphanumeric/underscore. |
+| `addGame(pkg)` / `removeGame(pkg)` | Add/remove a package from `gamelist.txt` (inotify-triggered reload) |
+| `getGames()` | Newline-joined gamelist |
+| `getState()` | Contents of `STATE_FILE` (`device_info.toml`) |
+| `applyNow()` | Forces an immediate profile re-apply |
+
+---
+
+## 7. Runtime paths (`Config.toml` -> `build.rs` -> `common::paths`)
+
+All paths are resolved at build time. Defaults:
+
+| Constant | Config.toml key | Default | Section |
+|---|---|---|---|
+| `BASE_DIR` | `[PATHS] BASE_DIR` | `/data/vendor/AZenithInt` | root |
+| `GAMELIST_DIR` | `[PATHS] GAMELIST_DIR` | `gamelist` | relative to BASE_DIR |
+| `API_DIR` | `[PATHS] API_DIR` | `API` | relative to BASE_DIR |
+| `DAEMON_LOCK` | `[PATHS] DAEMON_LOCK` | `.lock` | relative to BASE_DIR |
+| `CODES_CACHE` | `[PATHS] CODES_CACHE` | `codes` | relative to BASE_DIR |
+| `SERVICE_ENABLED_FILE` | `[PATHS] SERVICE_ENABLED_FILE` | `service_enabled` | relative to BASE_DIR |
+| `BINDER_RESOLVER_APK` | `[PATHS] BINDER_RESOLVER_APK` | `binder_resolver.apk` | relative to BASE_DIR |
+| `GAMELIST_FILE` | `[PATHS] GAMELIST_FILE` | `gamelist.txt` | relative to GAMELIST_DIR |
+| `CURRENT_PROFILE` | `[PATHS] CURRENT_PROFILE` | `current_profile` | relative to API_DIR |
+| `GAMEINFO` | `[PATHS] GAMEINFO` | `gameinfo` | relative to API_DIR |
+| `SAVED_GOVERNOR` | `[PATHS] SAVED_GOVERNOR` | `saved_governor` | relative to API_DIR |
+| `STATE_FILE` | `[PATHS] STATE_FILE` | `device_info.toml` | relative to API_DIR |
+| `SOC` | `[DEVICE] SOC` | `none` | chipset name |
+
+Runtime file layout (default `BASE_DIR`):
+
+```
+/data/vendor/AZenithInt/
+  gamelist/
+    gamelist.txt          # one package per line, watched via inotify
+    gamelistloaded        # marker: installed games scanned (versioned "games-v1 <n>")
+  API/
+    current_profile       # applied profile mode number
+    gameinfo              # "<pkg> <pid> <uid>\nTime: HH:MM:SS\n"
+    saved_governor        # "<boot_id>\n<gov>\n" (boot-ID tagged)
+    device_info.toml      # state store: profile, active_app, screen, saver, zen, battery
+  codes.<sdk>.<incremental>   # binder transaction code cache
+  .lock                   # single-instance lock
+  service_enabled         # persisted AIDL setServiceEnabled value ("1"/"0")
+  binder_resolver.apk     # extracted at runtime by the codes resolver, then removed
+```
+
+`BASE_DIR`, `GAMELIST_DIR` and `API_DIR` are created automatically at daemon
+start. `STATE_FILE`, `CURRENT_PROFILE`, `GAMEINFO` and `SAVED_GOVERNOR` all
+live in `API_DIR` so every runtime state file is in one place.
+
+---
+
+## 8. System properties
+
+Two prefixes, both `persist.sys.` (platform-owned, maps to `system_prop` — do
+**not** add them to `vendor_property_context`):
+
+### 8.1 Master switch & general (`persist.sys.azenithIntg.*`)
+
+| Property | Values | Meaning |
+|---|---|---|
+| `persist.sys.azenithIntg.state` | `1` / `0` | Master switch. Set in `/vendor/build.prop` so `init.azenith.rc` starts the daemon. Also persisted by the AIDL service. |
+| `persist.sys.azenithIntg.disabletweak` | `1` / `0` | Disables every tweak without turning the daemon off. |
+| `persist.sys.azenithIntg.debugmode` | `true` / `false` | Verbose DEBUG logcat, tag `AZenith`. Restart the service after changing. |
+
+### 8.2 CPU governor (`persist.sys.azenithIntg.custom_*_cpu_gov`)
+
+| Property | Applies to |
+|---|---|
+| `persist.sys.azenithIntg.custom_default_cpu_gov` | balanced — explicit override |
+| `persist.sys.azenithIntg.custom_powersave_cpu_gov` | eco — explicit override |
+| `persist.sys.azenithIntg.custom_performance_cpu_gov` | performance — explicit override |
+
+Resolution:
+* **performance / eco** — if the matching `custom_*` property is set, it is applied as-is. Otherwise the governor on `cpu0` is saved and then `performance` / `powersave` is applied. The save happens on every entry, so it always remembers the governor in place just before that switch.
+* **balanced** — `custom_default_cpu_gov` wins when set; otherwise the saved governor is restored; with nothing saved yet (first apply after boot) the kernel baseline is left untouched.
+
+The saved governor lives in `API/saved_governor`, tagged with the kernel boot ID
+(`/proc/sys/kernel/random/boot_id`), so a value from a previous boot is ignored.
+
+### 8.3 Toggles (`persist.sys.azenithConfIntg.*`)
+
+`1` = ON, `0` = OFF; empty treated as `0`.
+
+| Property | Description |
+|---|---|
+| `persist.sys.azenithConfIntg.litemode` | Lite mode — CPU limiting at 90% of max, mid-frequency selections |
+| `persist.sys.azenithConfIntg.clearbg` | Clear background apps in the performance profile |
+| `persist.sys.azenithConfIntg.freqoffset` | Frequency ceiling in percent, `10`–`100`. `100` or `Disabled` = no limit |
+| `persist.sys.azenithConfIntg.fstrim` | Periodic `fstrim` run (utility) |
+| `persist.sys.azenithConfIntg.logd` | Stop logger services while gaming |
+| `persist.sys.azenithConfIntg.walttunes` | WALT load-tracking tuning |
+| `persist.sys.azenithConfIntg.DThermal` | Custom thermal handling |
+| `persist.sys.azenithConfIntg.SFL` | SurfaceFlinger tuning |
+| `persist.sys.azenithConfIntg.malisched` | Mali scheduler tweaks |
+| `persist.sys.azenithConfIntg.fpsged` | FPSGO / GED tuning (MediaTek) |
+| `persist.sys.azenithConfIntg.schedtunes` | Scheduler tuning bundle |
+| `persist.sys.azenithConfIntg.justintime` | JIT speed-profile compilation |
+| `persist.sys.azenithConfIntg.disabletrace` | Disable kernel tracing nodes |
+| `persist.sys.azenithConfIntg.usefpsgo` | `0` turns FPSGO off in performance (MediaTek) |
+| `persist.sys.azenithConfIntg.renderer` | HWUI/renderer backend (see below) |
+| `persist.sys.azenithConfIntg.schemeconfig` | Display colour preset (see below) |
+
+#### renderer
+
+`default` or empty resets everything.
+
+| Value | Effect |
+|---|---|
+| `skiavk`, `skiavkthreaded`, `vulkan` | Skia + Vulkan, `ro.hwui.use_vulkan=true` |
+| `skiagl`, `skiaglthreaded`, `gles`, `opengl`, `openglthreaded` | Skia + GLES, `ro.hwui.use_vulkan=false` |
+| `software` | Software renderer |
+| `*threaded` suffix | also enables `debug.hwui.render_thread=true` (plus `debug.skia.threaded_mode=true` when the name contains `skia`) |
+
+Other values fall back to a substring check (`vk`/`vulkan` -> Vulkan, `gl`/`gles` -> GLES).
+
+#### schemeconfig
+
+Read once during `initialize`. Preset name only (case-insensitive):
+
+| Preset | R | G | B | S |
+|---|---|---|---|---|
+| `default` | 1000 | 1000 | 1000 | 1000 |
+| `vivid` | 1000 | 1000 | 1000 | 1250 |
+| `warm` | 1050 | 1000 | 950 | 1100 |
+| `cool` | 950 | 950 | 1050 | 1000 |
+| `amoled` | 1020 | 1020 | 1020 | 1150 |
+
+Unset/empty = neutral (nothing applied). Anything else = nothing applied.
+
+---
+
+## 9. Profile engine (`cmd::settings`)
+
+### 9.1 Modes
+
+| Mode number | Name | Use |
+|---|---|---|
+| `0` | `initialize` | Boot phase, runs once |
+| `1` | `performance` | Gaming — max CPU freq, block I/O tuned, background apps cleared |
+| `2` | `balanced` | Daily use — saved/default governor, normal freq |
+| `3` | `eco` | Power saving — powersave governor, battery saver on |
+
+### 9.2 Execution taxonomy (shared by all three active profiles)
+
+1. Resolve CPU governor / I/O / Mali from profile props
+2. `apply_{balanced,performance,powersave}_governor`
+3. `apply_cpu_freq` (PPM path on MediaTek, plain sysfs otherwise)
+4. Log frequency mode
+5. `apply_common_tweaks` — VM → workqueue → EAS → stune → battery saver → split lock → sched features → block I/O
+6. Clear background apps (performance only, when `clearbg=1`)
+7. Chipset-specific tweaks
+8. Log "… profile applied"
+
+Only `initialize` sits outside this taxonomy.
+
+### 9.3 initialize (mode 0, boot phase)
+
+Runs once at boot **before** the binder thread pool starts:
+
+* Disables kernel panics (`panic`, `panic_on_warn`, `panic_on_oops`, `softlockup_panic`), runs `sync`.
+* Display colour scheme via SurfaceFlinger transactions (`service call SurfaceFlinger 1015/1022`) when `schemeconfig` is non-neutral.
+* Applies the balanced governor (baseline) and initialises the HWUI renderer (`persist.sys.azenithConfIntg.renderer`).
+* Sets `step_wise` on all thermal zone policies.
+* Disables `iostats` and `add_random` on all block devices.
+* TCP tweaks: picks the first available of `bbr3, bbr2, bbrplus, bbr, westwood, cubic`; sets `tcp_low_latency=1`, `tcp_ecn=1`, `tcp_fastopen=3`, `tcp_sack=1`, `tcp_timestamps=0`.
+* Kernel/scheduler: `perf_cpu_time_max_percent=3`, `sched_schedstats=0`, `task_cpustats_enable=0`, `sched_autogroup_enabled=0`, `sched_child_runs_first=1`, `sched_nr_migrate=32`, `sched_migration_cost_ns=50000`, `sched_min_granularity_ns=1000000`, `sched_wakeup_granularity_ns=1500000`.
+* VM: `page-cluster=0`, `stat_interval=15`, `compaction_proactiveness=0`.
+* Vendor/module: `mmc_core.use_spi_crc=0`, `opchain.chain_on=0`, `cpufreq_bouncing.enable=0`, `task_sched_info_enable=0`, `oplus sched_assist_enabled=0`.
+* Sched lib perf reporting for game engines (`libunity.so`, `libil2cpp.so`, `libmain.so`, `libUE4.so`, `libgodot_android.so`, `libgdx.so`, …) via `sched_lib_name` + `sched_lib_mask_force=255`.
+* Runs `utility::trim()` (fstrim) and `prefs::apply()` in-process.
+
+### 9.4 performance (mode 1)
+
+* Switches to the performance governor (saves baseline first).
+* CPU frequency: every cluster pinned to its max (`setgamefreq` / `setgamefreqppm`, or 90% in lite mode).
+* Logs `freq mode=max_available` (or `normal` in lite mode).
+* Common tweaks (performance values: `vfs_cache_pressure=80`, `drop_caches=3`, `power_efficient=N`, `eas_enabled=0`, `stune_boost=30`, `stune_boost_enabled=1`, `battery_saver=0`, `split_lock_mitigate=0`, sched features `NEXT_BUDDY`/`NO_TTWU_QUEUE`, block I/O `read_ahead_kb=32`, `nr_requests=32`).
+* Clears background apps when `clearbg=1`.
+* Chipset-specific performance tweaks (skipped in lite mode).
+
+### 9.5 balanced (mode 2)
+
+* Restores the saved/default governor.
+* CPU frequency: normal, subject to `freqoffset` ceiling (`setfreq` / `setfreqppm`; eco profile uses mid-frequency).
+* Common tweaks (balanced values: `vfs_cache_pressure=120`, no `drop_caches`, `power_efficient=Y`, `eas_enabled=1`, `stune_boost=0`, `stune_boost_enabled=0`, `battery_saver=0`, `split_lock_mitigate=1`, sched features `NEXT_BUDDY`/`TTWU_QUEUE`, block I/O `read_ahead_kb=128`, `nr_requests=64`).
+* No background-app clearing.
+* Chipset-specific balanced tweaks.
+
+### 9.6 eco (mode 3)
+
+* Switches to the powersave governor (saves baseline first).
+* CPU frequency: normal (min raised to 40% of max inside `setfreq`).
+* Logs `freq mode=low`.
+* Common tweaks (eco values: `vfs_cache_pressure=120`, `power_efficient=Y`, `eas_enabled=1`, `stune_boost=0`, `battery_saver=1`, `battery_saver_bool=Y`, `split_lock_mitigate=1`, sched features `NO_NEXT_BUDDY`/`NO_TTWU_QUEUE`, no block I/O).
+* Chipset-specific powersave tweaks.
+
+### 9.7 Chipset-specific tweaks
+
+Selected at build time by `[DEVICE] SOC` in `Config.toml`. Each SoC implements
+`balance()` / `performance()` / `powersave()` with the same step order, only
+values differ.
+
+| SoC | Tweaks |
+|---|---|
+| **mediatek** | PPM policy status, FPSGO, GED KPI, DRAM boost, cpufreq CCI/power mode, GPU OPP limit, EAS, GPU power-limited, syslimiter, battery OC protect, EARA thermal, dvfsrc, Mali power policy |
+| **snapdragon** | KGSL devfreq governors, bus DCVS (LLCC/L3/DDR/DDRQOS), GPU core clock (min/max), adrenoboost |
+| **exynos** | `/sys/kernel/gpu` min/max clock, Mali power policy, MIF devfreq unlock |
+| **tensor** | Mali scaling min/max freq, MIF devfreq |
+| **unisoc** | GPU devfreq unlock/min/max/perf |
+| **none** | (no chipset tweaks) |
+
+---
+
+## 10. Profile decision logic (`daemon::profiler`)
+
+The mode is decided from binder/state events:
+
+```
+active game in foreground && screen on  -> performance (1)
+battery saver on                         -> eco (3)
+everything else                          -> balanced (2)
+```
+
+* **Screen-off grace**: while a game is active and the screen turns off,
+  performance is kept for 10 seconds (`SCREEN_OFF_GRACE`), then the profiler
+  drops out of performance on the next status poll cycle (`tick()`).
+* **Service gate**: when the service is disabled (AIDL `setServiceEnabled(false)`
+  or `persist.sys.azenithIntg.state=0`), `checkup()` does nothing — the daemon
+  stays alive and keeps tracking the foreground app so enabling takes effect on
+  the next event.
+* **Active-app retention**: a gamelist app selected as active stays pinned
+  (performance) until its **last** process dies (`onProcessDied`), even when it
+  is backgrounded by a non-game foreground app.
+* A non-game foreground app does not displace a pinned active game.
+* `force_reapply()` (AIDL `applyNow`) resets the current mode to `0` so a config
+  change takes effect immediately instead of at the next app switch.
+* Profile changes broadcast a notification:
+  `am broadcast --user 0 -a com.rianixia.settings.SHOW_NOTIFICATION
+   -n com.rianixia.settings.overlay/com.rianixia.settings.overlay.OverlayService
+   --es category azenith --es profile <name> [--es pkg <pkg>] &`
+
+---
+
+## 11. State & status tracking
+
+### 11.1 Process & active-app state (`daemon::state`)
+
+* `IProcessObserver` callbacks update the process table (`/proc` scan via
+  `procs::scan_apps`) and the focused foreground app.
+* `set_focused()` is called on foreground changes; if the focused package is in
+  the gamelist it becomes the active game and `apply()` runs.
+* `remove_proc()` clears the active game when its last process dies.
+* `watch_processes()` polls every 1.5s to recover focus at startup or after the
+  focused process dies; it never clears a selected game based on a `/proc`
+  snapshot (AMS owns that lifecycle).
+* `seed()` runs at startup: scans running apps, finds the unambiguous top app
+  (`oom_score_adj == 0`), and applies the initial profile.
+
+### 11.2 System status (`daemon::status`)
+
+Polled every 500ms over binder (no framework events are usable from a native
+process — `registerContentObserver` requires a `ProcessRecord` that only Zygote
+apps have):
+
+* `IPowerManager.isInteractive` -> screen `on`/`off`
+* `IPowerManager.isPowerSaveMode` -> battery saver `on`/`off`
+* `INotificationManager.getZenMode` -> zen `off`/`priority`/`none`/`alarms`
+* `IBatteryPropertiesRegistrar.getProperty` -> battery `level` (0–100) and
+  `charge` (`charging`/`discharging`)
+* `IDisplayManagerCallback.onDisplayEvent` -> re-queries `isInteractive` on
+  display changes
+
+Status changes update `SysStat` and, when something changed, rewrite
+`STATE_FILE` (`device_info.toml`) and re-run `profiler::checkup()`.
+
+`device_info.toml` shape:
+
+```toml
+# state (auto-generated, do not edit manually)
+profile = "balanced"
+active_app = "com.example.game"
+screen = "on"
+battery_saver = "off"
+zen_mode = "off"
+battery_level = 87
+charging = "discharging"
+```
+
+Writes are atomic (temp + rename) and skipped when contents are unchanged.
+
+---
+
+## 12. Game package list (`gamelist.txt`)
+
+* Auto-generated on first boot: the daemon asks the package manager (through
+  the embedded resolver APK, `__AZENITH_GAMES__` query) which installed apps are
+  `ApplicationInfo.category == CATEGORY_GAME`, writes **only those** to
+  `gamelist.txt`, then writes the versioned marker `gamelistloaded`
+  (`games-v1 <n>`).
+* On later boots, if the marker is current, the scan is skipped and only
+  `gamelist.txt` is read.
+* On upgrade from an older build, the existing list is intersected with the
+  installed games so manual picks that are still installed survive.
+* `zx.azenith` (and sub-packages) is never added by the scan.
+* The directory is watched via `inotify` (`IN_CLOSE_WRITE` / `IN_MOVED_TO`);
+  editing `gamelist.txt` reloads it immediately, no reboot needed.
+* One package name per line; blank lines, `#` comments and trailing text after
+  whitespace are ignored (`com.foo # shooter` -> `com.foo`).
+* Add/remove single games at runtime via the AIDL `addGame`/`removeGame`
+  methods.
+* Delete `gamelist/gamelistloaded` and reboot to rebuild the list from scratch.
+
+---
+
+## 13. Companion commands (subcommands of the same binary)
+
+Dispatched in `main.rs` via `subcommand()`. Legacy binary names still work:
+`sys.azenith-profilesettings` -> `profilesettings`, etc. Each CLI entry guards
+itself with `verify_caller()` (parent process must be the service) so manual
+shell invocation is rejected; the daemon calls the same functions in-process.
+
+| Subcommand | Legacy name | Module | Purpose |
+|---|---|---|---|
+| `profilesettings` | `sys.azenith-profilesettings` | `cmd::settings` | Profile engine: `0`/`initialize`, `1`/`performance_profile`, `2`/`balanced_profile`, `3`/`eco_mode`, `applyfreqbalance`, `applyfreqgame` |
+| `utilityconf` | `sys.azenith-utilityconf` | `cmd::utility` | `setsgov`, `setthermalcore`, `checkmalipath`, `FSTrim`, `enableDND`, `disableDND`, `setrefreshrates`, `restartservice`, `setrender` |
+| `preferencedtweaks` | `sys.azenith-preferencedtweaks` | `cmd::prefs` | Preference tweaks bundle (`apply`/default) |
+| `preload` | `sys.azenith-preloadbin` | `cmd::preload` | `preload -t [-v] [-m <size>] <path>...` — touch files into page cache (vmtouch-compatible output) |
+
+`cmd::settings::run_action()` also accepts an existing file path or dotted
+command name and executes it directly — an escape hatch for arbitrary commands.
+
+Preference tweaks applied by `prefs::apply()` (each gated by its
+`persist.sys.azenithConfIntg.*` property):
+* `justintime` — `cmd package compile -m speed-profile` for all 3rd-party packages
+* `schedtunes` — schedutil/schedhorizon up_delay/efficient_freq/rate limits per cpufreq policy
+* `walttunes` — WALT governor params (hispeed_load, hispeed_freq, rtg_boost_freq, target_loads, efficient_freq, rate limits)
+* `fpsged` — FPSGO/GED parameters (MediaTek)
+* `malisched` — Mali serialize_jobs / js_ctx_scheduling_mode
+* `SFL` — SurfaceFlinger phase/duration offsets derived from measured refresh rate + CPU load
+* `DThermal` — disables thermal engine (`pkill thermald`, stops thermal init services, resets thermal props, sets thermal zone modes to `disabled`/`userspace`, chmods temp nodes to `000`, clears PPM limits, `cmd thermalservice override-status 0`)
+* `disabletrace` — truncates `/sys/kernel/tracing` files and stops tracing cmd services
+* `logd` — stops/starts logger services (`logd`, `traced`, `statsd`, `tcpdump`, `cnss_diag`, `subsystem_ramdump`, `charge_logger`, `wlan_logging`)
+
+---
+
+## 14. Logging
+
+* Tag: `AZenith`
+* Command: `adb logcat -s AZenith`
+* Levels: `debug` / `info` / `warn` / `error`, controlled by
+  `persist.sys.azenithIntg.debugmode` (or `LIBBINDING_LOG` env var).
+* Every line is prefixed with a component, e.g. `[daemon.profiler]`,
+  `[cmd.settings.cpu]`, `[cmd.prefs.walt]`, `[common.fs]`.
+* Nothing is written to disk; all output goes to logcat via
+  `android_ffi::logcat`.
+
+Component groups: `daemon.*` (binder engine), `cmd.*` (companion commands),
+`common.*` (shared helpers). Full list in `src/common/log.rs` (`comp` module).
+
+---
+
+## 15. SELinux policy
+
+Patch the vendor sepolicy so `init` can launch the service and the daemon can
+touch system properties. Types: `azenith_service` (domain), `azenith_service_exec`
+(executable), `azenith_prop` (property).
+
+File contexts (`vendor_file_context`):
+
+```
+/vendor/bin/hw/vendor.azenith-service    u:object_r:azenith_service_exec:s0
+```
+
+CIL (`vendor_sepolicy.cil`):
+
+```cil
+(typeattributeset domain (azenith_service))
+(typeattributeset mlstrustedsubject (azenith_service))
+(typeattributeset dev_type (azenith_service))
+(typeattributeset extended_core_property_type (azenith_prop))
+
+(type azenith_service)
+(roletype object_r azenith_service)
+(type azenith_service_exec)
+(roletype object_r azenith_service_exec)
+(type azenith_prop)
+(roletype object_r azenith_prop)
+
+(allow init azenith_prop (file (relabelto write read getattr map open)))
+(allow azenith_prop tmpfs (filesystem (associate)))
+(typetransition init azenith_service_exec process azenith_service)
+
+(allow azenith_service system_prop (file (getattr map open read)))
+(allow azenith_service system_prop (property_service (set)))
+```
+
+Both property prefixes (`persist.sys.azenithIntg.*`, `persist.sys.azenithConfIntg.*`)
+resolve to `system_prop` (platform-owned), so they must **not** be added to
+`vendor_property_context` — that prefix is already claimed by `plat_property_contexts`.
+
+Possible denials to watch: sysfs/procfs access by `azenith_service`, property
+service access. Iterate until no `avc: denied` spam. See `sepolicyguide.md`.
+
+---
+
+## 16. Build script (`Cargo/build.rs`) responsibilities
+
+1. Generates AIDL bindings from `aidl/` into `$OUT_DIR/bindings.rs`
+   (`rsbinder_aidl::Builder`).
+2. Requires `Cargo/binder_resolver.apk` (panics with a clear message otherwise).
+3. Reads `Config.toml` (`[PATHS]` + `[DEVICE]`) with a hand-rolled TOML section
+   parser (no runtime TOML dependency).
+4. Resolves every path (directory pass first, since `BASE_DIR` is the parent of
+   everything; file pass second; device pass third).
+5. Emits `$OUT_DIR/paths.rs` with one `pub(crate) const NAME: &str = "..."`
+   per key — `include!`d by `src/common/paths.rs`.
+6. Normalises `[DEVICE] SOC` via `SOC_ALIASES` (names `none`/`mediatek`/
+   `snapdragon`/`exynos`/`unisoc`/`tensor` plus legacy `0`–`5`), warning on
+   legacy or unknown values.
+
+---
+
+## 17. Credits & license
+
+* Developed by @Zexshia and @rianixia (Telegram).
+* Credits: @Kombat, @Kaminarich, @Rem01Gaming.
+* Adapted from AZenith (encore/jni, BinderNDK.cpp, BinderMonitor.cpp,
+  sysdaemon observer/procs).
+* Licensed under the Apache License 2.0 — see `LICENSE`.
+* Changelog: `changelog.md` (AZenith RomIntgr 1.0 — Initial Release, Sync with AZenith 3.3).
+
+---
+
+## 18. Related documents in this repo
+
+| Document | Purpose |
+|---|---|
+| `README.md` | Quick start + vendor integration summary |
+| `GUIDE.md` | Full technical reference (architecture, SELinux, properties, file layout) |
+| `listproperties.md` | Complete `persist.sys.azenithIntg.*` / `persist.sys.azenithConfIntg.*` property reference |
+| `sepolicyguide.md` | SELinux CIL definitions, file contexts, permission rules |
+| `Config.toml` | Build-time path + SoC configuration |
+| `init.azenith.rc` | init service definition |
+| `changelog.md` | Release notes |
+| `Cargo/build.rs` | Build-time config + AIDL binding generation |
+| `Cargo/aidl/vendor/azenith/IAZenithService.aidl` | AIDL interface source of truth |
