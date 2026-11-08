@@ -256,8 +256,8 @@ interface IAZenithService {
     const int VERSION = 1;
 
     int getApiVersion();
-    boolean setTweakEnabled(boolean enabled);
-    boolean isTweakEnabled();
+    boolean setDisabled(boolean disabled);
+    boolean isDisabled();
     boolean setConfig(in String key, in String value);
     boolean addGame(in String pkg);
     boolean removeGame(in String pkg);
@@ -275,8 +275,8 @@ the libbinder_ndk pool last.
 | Method | Behaviour |
 |---|---|
 | `getApiVersion()` | Returns `1` |
-| `setTweakEnabled(bool)` | Sets `persist.sys.azenithIntg.disabletweak` (inverted: `true` = tweaks on, `false` = tweaks off). Off = daemon keeps tracking but triggers nothing. |
-| `isTweakEnabled()` | Returns current tweak state (`true` = tweaks enabled, `false` = disabled). |
+| `setDisabled(bool)` | Sets `persist.sys.azenithIntg.disabletweak` (`true` = disable tweaks, `false` = enable tweaks). |
+| `isDisabled()` | Returns current disabletweak state (`true` = tweaks disabled). |
 | `setConfig(key, value)` | Writes `persist.sys.azenithConfIntg.<key>` via `setprop`. Key must be non-empty alphanumeric/underscore. |
 | `addGame(pkg)` / `removeGame(pkg)` | Add/remove a package from `gamelist.txt` (inotify-triggered reload) |
 | `getGames()` | Newline-joined gamelist |
@@ -500,7 +500,7 @@ everything else                          -> balanced (2)
 * **Screen-off grace**: while a game is active and the screen turns off,
   performance is kept for 10 seconds (`SCREEN_OFF_GRACE`), then the profiler
   drops out of performance on the next status poll cycle (`tick()`).
-* **Service gate**: when the service is disabled (AIDL `setTweakEnabled(false)`
+* **Service gate**: when the service is disabled (AIDL `setDisabled(true)`
   or `persist.sys.azenithIntg.state=0`), `checkup()` does nothing — the daemon
   stays alive and keeps tracking the foreground app so enabling takes effect on
   the next event.

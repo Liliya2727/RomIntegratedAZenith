@@ -27,16 +27,14 @@ impl IAZenithService for AZenithService {
         Ok(IFACE_VERSION)
     }
 
-    fn setTweakEnabled(&self, enabled: bool) -> BinderResult<bool> {
-        // Inverted: setTweakEnabled(true) -> disabletweak=0 (tweaks on),
-        // setTweakEnabled(false) -> disabletweak=1 (tweaks off).
-        let disable = if enabled { "0" } else { "1" };
-        crate::common::prop::setprop("persist.sys.azenithIntg.disabletweak", disable);
+    fn setDisabled(&self, disabled: bool) -> BinderResult<bool> {
+        let v = if disabled { "1" } else { "0" };
+        crate::common::prop::setprop("persist.sys.azenithIntg.disabletweak", v);
         Ok(true)
     }
 
-    fn isTweakEnabled(&self) -> BinderResult<bool> {
-        Ok(crate::common::prop::getprop("persist.sys.azenithIntg.disabletweak") != "1")
+    fn isDisabled(&self) -> BinderResult<bool> {
+        Ok(crate::common::prop::getprop("persist.sys.azenithIntg.disabletweak") == "1")
     }
 
     fn setConfig(&self, key: &str, value: &str) -> BinderResult<bool> {
