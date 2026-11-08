@@ -705,9 +705,8 @@ service access. Iterate until no `avc: denied` spam. See `sepolicyguide.md`.
 
 * Developed by @Zexshia and @rianixia (Telegram).
 * Credits: @Kombat, @Kaminarich, @Rem01Gaming.
-* Adapted from AZenith (encore/jni, BinderNDK.cpp, BinderMonitor.cpp,
-  sysdaemon observer/procs).
-* Licensed under the Apache License 2.0 — see `LICENSE`.
+* Adapted from AZenith (sysdaemon).
+* Licensed under the GNU General Public License v3.0 — see `LICENSE`.
 
 ---
 
