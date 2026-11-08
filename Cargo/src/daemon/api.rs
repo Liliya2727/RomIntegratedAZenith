@@ -35,6 +35,10 @@ impl IAZenithService for AZenithService {
         Ok(true)
     }
 
+    fn isTweakEnabled(&self) -> BinderResult<bool> {
+        Ok(crate::common::prop::getprop("persist.sys.azenithIntg.disabletweak") != "1")
+    }
+
     fn setConfig(&self, key: &str, value: &str) -> BinderResult<bool> {
         if key.is_empty() || !key.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
             error!(comp::DAEMON, "aidl: rejected config key '{key}'");

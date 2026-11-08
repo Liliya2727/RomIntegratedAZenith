@@ -257,6 +257,7 @@ interface IAZenithService {
 
     int getApiVersion();
     boolean setServiceEnabled(boolean enabled);
+    boolean isTweakEnabled();
     boolean setConfig(in String key, in String value);
     boolean addGame(in String pkg);
     boolean removeGame(in String pkg);
@@ -275,6 +276,7 @@ the libbinder_ndk pool last.
 |---|---|
 | `getApiVersion()` | Returns `1` |
 | `setServiceEnabled(bool)` | Sets `persist.sys.azenithIntg.disabletweak` (inverted: `true` = tweaks on, `false` = tweaks off). Off = daemon keeps tracking but triggers nothing. |
+| `isTweakEnabled()` | Returns current tweak state (`true` = tweaks enabled, `false` = disabled). |
 | `setConfig(key, value)` | Writes `persist.sys.azenithConfIntg.<key>` via `setprop`. Key must be non-empty alphanumeric/underscore. |
 | `addGame(pkg)` / `removeGame(pkg)` | Add/remove a package from `gamelist.txt` (inotify-triggered reload) |
 | `getGames()` | Newline-joined gamelist |
