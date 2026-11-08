@@ -15,7 +15,7 @@ use crate::common::paths::STATE_FILE;
 
 pub(crate) struct St {
     pub(crate) list: BTreeSet<String>,                  // packages in the gamelist
-    pub(crate) active: Option<(String, BTreeSet<i32>)>, // (package, live pids) of the active app
+    pub(crate) active: Option<(String, BTreeSet<i32>)>, // selected game, retained until its last process dies
     pub(crate) focused: Option<(String, i32, i32)>,     // (package, pid, uid) of foreground app
     pub(crate) procs: BTreeMap<i32, (String, i32)>,     // pid -> (package, uid) of all known app processes
     last: String,                                       // last active app recorded in state.toml
@@ -134,22 +134,34 @@ pub(crate) fn add_proc(pid: i32, pkg: &str, uid: i32) {
     }
 }
 
+/// Return every process currently known for a package. Track all of them so
+/// the game remains selected until the package's final process dies.
+fn package_pids(s: &St, pkg: &str) -> BTreeSet<i32> {
+    s.procs.iter()
+        .filter_map(|(pid, (process_pkg, _))| (process_pkg == pkg).then_some(*pid))
+        .collect()
+}
+
 pub(crate) fn remove_proc(pid: i32, why: &str) {
     let mut g = st();
     let s = &mut *g;
-    s.procs.remove(&pid);
+    let removed_pkg = s.procs.remove(&pid).map(|(pkg, _)| pkg);
     if let Some((_, fpid, _)) = s.focused {
         if fpid == pid {
             s.focused = None;
         }
     }
-    let gone = match &mut s.active {
-        Some((_, pids)) => pids.remove(&pid) && pids.is_empty(),
-        None => false,
+    let gone = if let Some((pkg, pids)) = &mut s.active
+        && removed_pkg.as_deref() == Some(pkg.as_str())
+    {
+        pids.remove(&pid);
+        !s.procs.values().any(|(process_pkg, _)| process_pkg == pkg)
+    } else {
+        false
     };
     if gone {
         if let Some((pkg, _)) = s.active.take() {
-            info!(comp::STATE, "active app died: {pkg} (pid {pid})");
+            info!(comp::STATE, "active game destroyed: {pkg} (last process died, pid {pid})");
         }
         apply(s, why);
     }
@@ -165,15 +177,19 @@ pub(crate) fn set_focused(pkg: &str, pid: i32, uid: i32, why: &str) {
     if s.list.contains(&pkg) {
         let same = matches!(&s.active, Some((p, _)) if *p == pkg);
         if same {
-            if let Some((_, pids)) = &mut s.active { pids.insert(pid); }
+            let pids = package_pids(s, &pkg);
+            if let Some((_, active_pids)) = &mut s.active { active_pids.extend(pids); }
         } else {
-            info!(comp::STATE, "gamelist app went to foreground: {pkg} (pid {pid})");
-            s.active = Some((pkg, BTreeSet::from([pid])));
+            info!(comp::STATE, "game selected from foreground: {pkg} (pid {pid}); retaining until its last process dies");
+            let pids = package_pids(s, &pkg);
+            s.active = Some((pkg, pids));
             apply(s, why);
         }
-    } else if let Some((prev_pkg, _)) = s.active.take() {
-        info!(comp::STATE, "leaving game {prev_pkg} -> non-game fg: {pkg} (pid {pid})");
-        apply(s, why);
+    } else if let Some((active_pkg, _)) = &s.active {
+        // Foreground is a detection signal, not the lifetime of a selected
+        // game. Keep performance and the tracked package while it is
+        // backgrounded; onProcessDied clears it after its last process exits.
+        debug!(comp::STATE, "non-game foreground [{pkg}] while game [{active_pkg}] remains pinned until process death");
     }
 }
 
@@ -192,7 +208,8 @@ pub(crate) fn seed() {
         info!(comp::STATE, "initial state: [{}] is in foreground (pid {}, oom_score_adj 0)", a.pkg, a.pid);
         s.focused = Some((a.pkg.clone(), a.pid, a.uid));
         if s.list.contains(&a.pkg) {
-            s.active = Some((a.pkg.clone(), BTreeSet::from([a.pid])));
+            let pids = package_pids(s, &a.pkg);
+            s.active = Some((a.pkg.clone(), pids));
         }
     } else {
         debug!(comp::STATE, "initial state: no unambiguous foreground app ({} candidates)", top.len());
@@ -212,7 +229,9 @@ pub(crate) fn adopt(why: &str) {
     if s.active.is_none() {
         if let Some((ref pkg, pid, _)) = s.focused {
             if s.list.contains(pkg) {
-                s.active = Some((pkg.clone(), BTreeSet::from([pid])));
+                let mut pids = package_pids(s, pkg);
+                pids.insert(pid);
+                s.active = Some((pkg.clone(), pids));
             }
         }
     }
@@ -250,17 +269,8 @@ pub(crate) fn watch_processes() {
             }
         }
 
-        // If an active game is set, only catch the case where every process
-        // belonging to it has actually died. Leaving the game is reported by
-        // AMS; checking adj here used to clear the profile on ROMs that keep a
-        // game at a non-zero adj while it is on screen.
-        if let Some((ref game_pkg, ref pids)) = s.active {
-            if !apps.iter().any(|a| a.pkg == *game_pkg && pids.contains(&a.pid)) {
-                let pkg = game_pkg.clone();
-                s.active = None;
-                info!(comp::STATE, "active game {pkg} is no longer running");
-                apply(s, "process poller: game gone");
-            }
-        }
+        // Do not clear the selected game based on a /proc snapshot. AMS's
+        // onProcessDied callback owns that lifecycle transition so a background
+        // game keeps its profile until its last process has exited.
     });
 }
