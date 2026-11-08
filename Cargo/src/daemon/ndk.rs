@@ -145,10 +145,16 @@ pub(crate) fn service_try(name: &CStr, desc: &CStr, tries: u32) -> P {
 
 pub(crate) fn service(name: &CStr, desc: &CStr) -> P { service_try(name, desc, 100) }
 
-// size already includes the NUL terminator; size <= 0 means a null string
+// size already includes the NUL terminator; size <= 0 means a null string.
+// AParcel_readString passes out == null for a null string on this platform, so
+// never dereference it before checking.
 pub(crate) unsafe extern "C" fn str_alloc(data: P, size: i32, out: *mut *mut c_char) -> bool {
     unsafe {
-        if size <= 0 { *out = null_mut(); return true; }
+        if size <= 0 {
+            if !out.is_null() { *out = null_mut(); }
+            return true;
+        }
+        if out.is_null() { return false; }
         let v = &mut *(data as *mut Vec<u8>);
         v.resize(size as usize, 0);
         *out = v.as_mut_ptr() as *mut c_char;
