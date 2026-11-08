@@ -27,9 +27,9 @@ impl IAZenithService for AZenithService {
         Ok(IFACE_VERSION)
     }
 
-    fn setServiceEnabled(&self, enabled: bool) -> BinderResult<bool> {
-        // Inverted: setServiceEnabled(true) -> disabletweak=0 (tweaks on),
-        // setServiceEnabled(false) -> disabletweak=1 (tweaks off).
+    fn setTweakEnabled(&self, enabled: bool) -> BinderResult<bool> {
+        // Inverted: setTweakEnabled(true) -> disabletweak=0 (tweaks on),
+        // setTweakEnabled(false) -> disabletweak=1 (tweaks off).
         let disable = if enabled { "0" } else { "1" };
         crate::common::prop::setprop("persist.sys.azenithIntg.disabletweak", disable);
         Ok(true)

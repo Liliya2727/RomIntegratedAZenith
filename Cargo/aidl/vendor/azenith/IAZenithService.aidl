@@ -4,7 +4,7 @@ interface IAZenithService {
     const int VERSION = 1;
 
     int getApiVersion();
-    boolean setServiceEnabled(boolean enabled);
+    boolean setTweakEnabled(boolean enabled);
     boolean isTweakEnabled();
     boolean setConfig(in String key, in String value);
     boolean addGame(in String pkg);
