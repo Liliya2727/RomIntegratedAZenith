@@ -262,8 +262,6 @@ interface IAZenithService {
     boolean removeGame(in String pkg);
     String getGames();
     String getState();
-    void applyNow();
-    boolean isServiceEnabled();
 }
 ```
 
@@ -277,12 +275,10 @@ the libbinder_ndk pool last.
 |---|---|
 | `getApiVersion()` | Returns `1` |
 | `setServiceEnabled(bool)` | Sets `persist.sys.azenithIntg.disabletweak` (inverted: `true` = tweaks on, `false` = tweaks off). Off = daemon keeps tracking but triggers nothing. |
-| `isServiceEnabled()` | Current master switch state |
 | `setConfig(key, value)` | Writes `persist.sys.azenithConfIntg.<key>` via `setprop`. Key must be non-empty alphanumeric/underscore. |
 | `addGame(pkg)` / `removeGame(pkg)` | Add/remove a package from `gamelist.txt` (inotify-triggered reload) |
 | `getGames()` | Newline-joined gamelist |
 | `getState()` | Contents of `STATE_FILE` (`device_info.toml`) |
-| `applyNow()` | Forces an immediate profile re-apply |
 
 ---
 
@@ -510,7 +506,7 @@ everything else                          -> balanced (2)
   (performance) until its **last** process dies (`onProcessDied`), even when it
   is backgrounded by a non-game foreground app.
 * A non-game foreground app does not displace a pinned active game.
-* `force_reapply()` (AIDL `applyNow`) resets the current mode to `0` so a config
+* `force_reapply()` resets the current mode to `0` so a config
   change takes effect immediately instead of at the next app switch.
 * Profile changes broadcast a notification:
   `am broadcast --user 0 -a com.rianixia.settings.SHOW_NOTIFICATION

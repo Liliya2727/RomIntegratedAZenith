@@ -10,6 +10,4 @@ interface IAZenithService {
     boolean removeGame(in String pkg);
     String getGames();
     String getState();
-    void applyNow();
-    boolean isServiceEnabled();
 }
