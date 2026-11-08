@@ -1,107 +1,69 @@
 # AZenith for Developers
-Introducing Rom Integrated AZenith for developers/Rom Maintainer,
-Developed By @Zexshia and @rianixia on telegram
 
-Download from [Github Releases](https://github.com/Liliya2727/RomIntegratedAZenith/releases)
+Rom Integrated AZenith — system-level performance daemon for custom ROMs.
+Built by Rom Maintainers, for Rom Maintainers.
 
-## How to Add AZenith into my vendor?
-1. Place vendor.azenith-service binary to /vendor/bin/hw/
-2. Place init.azenith.rc to /vendor/etc/init/
-3. Place AZenith_Profiler and AZenith_config to /vendor/bin/
-4. Patch vendor [sepolicy](sepolicyguide.md)
-5. In /vendor/build.prop add "persist.sys.azenithIntg.state" prop value 1 for enabled, and value 0 for disabled
-6. To enable other tweaks and customization refer to the [properties list](listproperties.md)
-7. Repack Vendor
+Developed by [@Zexshia](https://t.me/Zexshia) and [@rianixia](https://t.me/rianixia) on Telegram.
 
-## Build configuration (Config.toml)
-By default every runtime file AZenith creates lives under `/data/adb/.config/AntaresRS/`.
-If your ROM layout needs a different place, edit [`Config.toml`](Config.toml) **before building**
-and recompile — no path is hardcoded in the Rust sources anymore.
+---
 
-```toml
-[PATHS]
-BASE_DIR      = "/data/adb/azenith"   # everything below follows this
-GAMELIST_DIR  = "/sdcard/AZ-games"    # absolute path = overrides just this entry
-```
+## Quick Start
 
-Keys are uppercase and named exactly like the Rust constant they generate, so
-`BASE_DIR = "..."` becomes `pub(crate) const BASE_DIR: &str = "..."`.
+There is no CI build pipeline in this repo — every maintainer builds the binary themselves.
 
-Rules:
-- Value starting with `/` is used as-is.
-- Any other value is relative to its parent (`BASE_DIR`, `GAMELIST_DIR` or `API_DIR`).
-- An empty string means "use the parent path".
-
-That means changing `BASE_DIR` alone relocates the whole tree (`gamelist/`, `API/` — which
-holds `current_profile`, `gameinfo` and `device_info.toml` — plus the binder resolver cache
-and the instance lock), and files declared relative to a directory
-you overrode keep following it. `Cargo/build.rs` resolves everything at compile time and generates
-`$OUT_DIR/paths.rs`; an invalid (non-absolute) path falls back to the default and prints a
-`cargo:warning`. Delete any key you do not care about — the defaults are applied automatically.
-
-### Building locally
-
-The Binder Resolver APK is not committed — it is embedded into the binary with
-`include_bytes!`, so build it first and drop it into `Cargo/`:
+### 1. Clone or fork the repository
 
 ```sh
-cd Resolver && ./gradlew assembleRelease
-cp app/build/outputs/apk/release/app-release-unsigned.apk ../Cargo/binder_resolver.apk
-cargo ndk -t arm64-v8a build --release   # plain `cargo build` for a host build
+git clone https://github.com/Liliya2727/RomIntegratedAZenith.git
+cd RomIntegratedAZenith
 ```
 
-If it is missing, `Cargo/build.rs` stops with that exact recipe. CI stages the APK
-automatically before `cargo ndk build`.
+### 2. Configure `Config.toml`
 
-### Choosing your chipset
+Edit [`Config.toml`](Config.toml) **before building** — see the [Build Configuration](#build-configuration-configtoml) section for the full reference.
 
-The SoC family is also baked in at build time (it used to be the runtime property
-`persist.azenith.soctype`), so set it once before building:
+### 3. Build
 
-```toml
-[DEVICE]
-SOC = "mediatek"   # mediatek | snapdragon | exynos | unisoc | tensor | none
+```sh
+./build_binary.sh             # release build
+./build_binary.sh --debug     # debug build
+./build_binary.sh --clean     # clean target first
+./build_binary.sh --output /path/to/staging
 ```
 
-One binary carries exactly one chipset set, so `none` simply means "only the generic tweaks".
-An unknown value falls back to `none` with a build warning; the old numeric values (`1`–`5`)
-are still accepted and normalized to the names above.
+`build_binary.sh` automatically:
+- builds the Binder Resolver APK (embedded into the binary via `include_bytes!`),
+- picks up your `Config.toml`,
+- compiles `azenith-service` for `aarch64-linux-android`,
+- stages the result at `output/vendor.azenith-service`.
 
-## Logging
-AZenith does not write any log file. Everything goes to logcat under the `AZenith` tag:
+That's it — `output/vendor.azenith-service` is the binary to drop into your vendor image.
 
-```
-adb logcat -s AZenith
-```
+---
 
-Each line is prefixed with the component that emitted it, e.g. `[daemon.profiler]` or
-`[cmd.settings.cpu]`.
+## How to Add AZenith into my Vendor?
 
-Verbose (DEBUG) output is opt-in through a single property, no flag file involved:
+1. Copy `output/vendor.azenith-service` to `/vendor/bin/hw/vendor.azenith-service` (must match the service name in `init.azenith.rc`).
+2. Copy `init.azenith.rc` to `/vendor/etc/init/`.
+3. No separate helper binaries ship anymore — the daemon is self-contained.
+4. Patch the vendor sepolicy — see [sepolicyguide.md](sepolicyguide.md).
+5. In `/vendor/build.prop`, add:
+   ```
+   persist.sys.azenithIntg.state=1   # 1 = enabled, 0 = disabled
+   ```
+6. Enable other tweaks via the [properties list](listproperties.md).
+7. Repack the vendor image.
 
-```
-setprop persist.sys.azenithIntg.debugmode true   # enable DEBUG
-setprop persist.sys.azenithIntg.debugmode false  # back to info
-```
+---
 
-Restart the service after flipping it. For a one-off run of a companion command you can also
-override the level with the `LIBBINDING_LOG` environment variable
-(`debug` / `info` / `warn` / `error`).
+## Credits
 
-## How add your app packages?
-1. Create the file gamelist.txt on /sdcard/gamelist.txt (If AZenith is properly running it should generate a gamelist.txt containing only the installed apps that Android categorises as games)
-2. Add your package inside the file for example "coample gamem.mobile.legends" if you want more package just add them in new lines
-For Example
-```
-com.mobile.legends
-adventure.rpg.anime.game.vng.ys6
-age.of.civilizations2.jakowski.lukasz
-air.com.ace2three.mobile.cash
-(and so on)
-```
-3. That's it! Enjoy
+- [@Kombat](https://t.me/Kombat)
+- [@Kaminarich](https://t.me/Kaminarich)
+- [@Rem01Gaming](https://t.me/Rem01Gaming)
 
-# Credits
-- @Kombat
-- @Kaminarich
-- @Rem01Gaming
+---
+
+## Full Docs
+
+See [DOCS.md](DOCS.md) for the complete technical reference (architecture, SELinux policy, system properties, file layout, and more).

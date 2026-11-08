@@ -67,8 +67,6 @@ Define the file contexts in:
 
 ```text
 /vendor/bin/hw/vendor.azenith-service    u:object_r:azenith_service_exec:s0
-/vendor/bin/AZenith_Profiler             u:object_r:vendor_shell_exec:s0
-/vendor/bin/AZenith_config               u:object_r:vendor_shell_exec:s0
 ```
 
 `persist.sys.` is already claimed by the platform policy: `plat_property_contexts` maps
