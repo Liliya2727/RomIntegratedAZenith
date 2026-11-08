@@ -53,7 +53,7 @@ fn collect_aidl(dir: &std::path::Path, out: &mut Vec<PathBuf>) {
 /// Directory keys: (constant name = key name, default, parent).
 /// A `None` parent means this key is the root (`BASE_DIR`) and its value must be absolute.
 const DIR_KEYS: &[(&str, &str, Option<&str>)] = &[
-    ("BASE_DIR", "/data/adb/.config/AntaresRS", None),
+    ("BASE_DIR", "/data/vendor/AZenithInt", None),
     ("GAMELIST_DIR", "gamelist", Some("BASE_DIR")),
     ("API_DIR", "API", Some("BASE_DIR")),
 ];
