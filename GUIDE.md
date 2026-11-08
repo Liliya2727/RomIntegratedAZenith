@@ -206,13 +206,3 @@ BASE_DIR/
 ```
 
 Paths declared relative to an overridden directory keep following it; everything is resolved at compile time by `build.rs`.
-
----
-
-## 10. Credits
-
-- [@Kombat](https://t.me/Kombat)
-- [@Kaminarich](https://t.me/Kaminarich)
-- [@Rem01Gaming](https://t.me/Rem01Gaming)
-
-Developed by [@Zexshia](https://t.me/Zexshia) and [@rianixia](https://t.me/rianixia) on Telegram.

@@ -66,4 +66,4 @@ That's it — `output/vendor.azenith-service` is the binary to drop into your ve
 
 ## Full Docs
 
-See [DOCS.md](DOCS.md) for the complete technical reference (architecture, SELinux policy, system properties, file layout, and more).
+See [GUIDE.md](GUIDE.md) for the complete technical reference (architecture, SELinux policy, system properties, file layout, and more).
