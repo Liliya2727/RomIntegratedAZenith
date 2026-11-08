@@ -18,7 +18,6 @@
 | Property | Values | Description |
 | --- | --- | --- |
 | `persist.sys.azenithIntg.state` | `1` = enabled, `0` = disabled | Master switch. Set it in `/vendor/build.prop` so `init.azenith.rc` starts the daemon on boot. The daemon also writes `stopped` to it while restarting the service. |
-| `persist.sys.azenithIntg.disabletweak` | `1` = disable, `0` = enable | Disables every tweak without turning the daemon off. |
 | `persist.sys.azenithIntg.debugmode` | `true` / `false` | Verbose (DEBUG) logging to logcat, tag `AZenith`. Restart the service after changing it. |
 
 

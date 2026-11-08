@@ -340,7 +340,6 @@ Two prefixes, both `persist.sys.` (platform-owned, maps to `system_prop` — do
 | Property | Values | Meaning |
 |---|---|---|
 | `persist.sys.azenithIntg.state` | `1` / `0` | Master switch. Set in `/vendor/build.prop` so `init.azenith.rc` starts the daemon. Also persisted by the AIDL service. |
-| `persist.sys.azenithIntg.disabletweak` | `1` / `0` | Disables every tweak without turning the daemon off. |
 | `persist.sys.azenithIntg.debugmode` | `true` / `false` | Verbose DEBUG logcat, tag `AZenith`. Restart the service after changing. |
 
 ### 8.2 CPU governor (`persist.sys.azenithIntg.custom_*_cpu_gov`)

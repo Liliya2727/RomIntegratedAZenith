@@ -28,8 +28,6 @@ cd RomIntegratedAZenith
 SOC = "mediatek"   # mediatek | snapdragon | exynos | unisoc | tensor | none
 ```
 
-Optionally relocate runtime paths under `[PATHS]` (see Build Configuration below).
-
 ### Compile
 
 ```sh
