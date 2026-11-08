@@ -708,7 +708,6 @@ service access. Iterate until no `avc: denied` spam. See `sepolicyguide.md`.
 * Adapted from AZenith (encore/jni, BinderNDK.cpp, BinderMonitor.cpp,
   sysdaemon observer/procs).
 * Licensed under the Apache License 2.0 — see `LICENSE`.
-* Changelog: `changelog.md` (AZenith RomIntgr 1.0 — Initial Release, Sync with AZenith 3.3).
 
 ---
 
