@@ -89,7 +89,7 @@ override the level with the `LIBBINDING_LOG` environment variable
 (`debug` / `info` / `warn` / `error`).
 
 ## How add your app packages?
-1. Create the file gamelist.txt on /sdcard/gamelist.txt (If AZenith is properly running it should generate an example gamelist.txt)
+1. Create the file gamelist.txt on /sdcard/gamelist.txt (If AZenith is properly running it should generate a gamelist.txt containing only the installed apps that Android categorises as games)
 2. Add your package inside the file for example "coample gamem.mobile.legends" if you want more package just add them in new lines
 For Example
 ```

@@ -2,7 +2,6 @@
 use std::fs;
 use std::io::Write;
 use std::os::unix::fs::PermissionsExt;
-use std::path::Path;
 use std::process::{Command, Stdio};
 use std::sync::OnceLock;
 
@@ -48,6 +47,34 @@ const ENTRY_CLASSES: [&str; 2] = ["zx.binder.MainKt", "com.rem01gaming.binderres
 
 fn run_resolver(apk: &str, entry: &str) -> String {
     run_resolver_entry(apk, entry, &Q)
+}
+
+/// Run the embedded resolver APK for one non-code question and return its
+/// stdout. The APK is staged in `BINDER_RESOLVER_APK` and removed afterwards,
+/// just like [`load_codes`]. `None` when no entry point produced any output.
+pub(crate) fn run_query(question: &str) -> Option<String> {
+    let _ = fs::remove_file(APK_PATH);
+    if let Err(e) = fs::write(APK_PATH, RESOLVER_APK) {
+        error!(comp::CODES, "failed to write {APK_PATH}: {e}");
+        return None;
+    }
+    if let Err(e) = fs::set_permissions(APK_PATH, fs::Permissions::from_mode(0o444)) {
+        error!(comp::CODES, "chmod failed for {APK_PATH}: {e}");
+        return None;
+    }
+
+    let mut result = None;
+    for entry in ENTRY_CLASSES {
+        let out = run_resolver_entry(APK_PATH, entry, &[question]);
+        if !out.trim().is_empty() {
+            debug!(comp::CODES, "resolver entry point: {entry}");
+            result = Some(out);
+            break;
+        }
+        warn!(comp::CODES, "resolver produced no usable output with {entry}, trying the next entry point");
+    }
+    let _ = fs::remove_file(APK_PATH);
+    result
 }
 
 fn run_resolver_entry(apk: &str, entry: &str, questions: &[&str]) -> String {
@@ -98,74 +125,6 @@ fn log_codes(c: &Codes) {
           c.reg, c.fg_act, c.fg_svc, c.died, c.proc_started, c.pm_name);
     info!(comp::CODES, "transaction codes: isInteractive={} isPowerSaveMode={} getZenMode={} registerDisplayCallback={} getProperty={}",
           c.is_interactive, c.is_saver, c.get_zen, c.disp_reg, c.bat_prop);
-}
-
-/// Resolve one extra transaction code the core set does not need.
-///
-/// `load_codes` only caches the handful of codes the observer and the status
-/// poller cannot work without; anything else (the first-boot package scan, for
-/// example) asks here. A code already in the cache is returned as-is. `None`
-/// means the class or the field is not on this platform, which is a normal
-/// answer for a feature that has a fallback — not an error.
-pub(crate) fn resolve_code(question: &str) -> Option<u32> {
-    let sdk = prop("ro.build.version.sdk");
-    let inc: String = prop("ro.build.version.incremental").chars()
-        .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' }).collect();
-    let cache = format!("{}.{sdk}.{inc}", crate::common::paths::CODES_CACHE);
-    if Path::new(&cache).exists() {
-        if let Ok(text) = fs::read_to_string(&cache) {
-            if let Some(code) = parse_one(&text, question) {
-                debug!(comp::CODES, "extra code already in cache: {question}={code}");
-                return Some(code);
-            }
-        }
-    }
-
-    info!(comp::CODES, "resolving extra transaction code: {question}");
-    let _ = fs::remove_file(APK_PATH);
-    if let Err(e) = fs::write(APK_PATH, RESOLVER_APK) {
-        error!(comp::CODES, "failed to write {APK_PATH}: {e}");
-        return None;
-    }
-    if let Err(e) = fs::set_permissions(APK_PATH, fs::Permissions::from_mode(0o444)) {
-        error!(comp::CODES, "chmod failed for {APK_PATH}: {e}");
-        return None;
-    }
-
-    let mut found = None;
-    for entry in ENTRY_CLASSES {
-        let out = run_resolver_entry(APK_PATH, entry, &[question]);
-        if let Some(v) = parse_one(&out, question) {
-            debug!(comp::CODES, "resolver entry point: {entry}");
-            found = Some(v);
-            break;
-        }
-        warn!(comp::CODES, "resolver produced no usable output with {entry}, trying the next entry point");
-    }
-    let _ = fs::remove_file(APK_PATH);
-
-    let Some(code) = found else {
-        warn!(comp::CODES, "{question} is not available on this build");
-        return None;
-    };
-    // Append to the cache — `load_codes` reads it on the next start, so the same
-    // code is never resolved twice for one SDK/build.
-    if let Ok(mut f) = fs::OpenOptions::new().create(true).append(true).open(&cache) {
-        if !fs::read_to_string(&cache).map(|t| t.ends_with('\n')).unwrap_or(false) {
-            let _ = f.write_all(b"\n");
-        }
-        if f.write_all(format!("{question} {code}\n").as_bytes()).is_ok() {
-            info!(comp::CODES, "extra code saved to cache: {question}={code}");
-        }
-    }
-    Some(code)
-}
-
-fn parse_one(text: &str, question: &str) -> Option<u32> {
-    text.lines().find_map(|l| {
-        let (k, v) = l.rsplit_once(' ')?;
-        if k == question { v.parse::<u32>().ok() } else { None }
-    })
 }
 
 pub(crate) fn load_codes() -> Option<Codes> {

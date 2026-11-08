@@ -16,12 +16,19 @@
 
 package zx.binder
 
+import android.content.pm.ApplicationInfo
+import android.content.pm.PackageManager
+
 import java.io.BufferedReader
 import java.io.File
 import java.io.InputStreamReader
 import java.io.PrintWriter
 
 import org.lsposed.hiddenapibypass.HiddenApiBypass
+
+private const val GAMES_QUERY = "__AZENITH_GAMES__"
+private const val GAMES_BEGIN = "AZENITH_GAMES_BEGIN"
+private const val GAMES_END = "AZENITH_GAMES_END"
 
 object MainKt {
     @JvmStatic
@@ -46,6 +53,19 @@ object MainKt {
                 val currentLine = line?.trim() ?: continue
                 if (currentLine.isEmpty()) continue
 
+                if (currentLine == GAMES_QUERY) {
+                    try {
+                        val games = resolveGamePackages()
+                        writer.println("$GAMES_BEGIN ${games.size}")
+                        games.forEach { writer.println(it) }
+                        writer.println(GAMES_END)
+                        writer.flush()
+                    } catch (t: Throwable) {
+                        System.err.println("ERROR: failed to list game packages -> ${t.message}")
+                    }
+                    continue
+                }
+
                 val parts = currentLine.split("::")
                 if (parts.size != 2) {
                     System.err.println("ERROR: Invalid format '$currentLine'. Use Class::TRANSACTION_name")
@@ -67,6 +87,45 @@ object MainKt {
             writer.close()
             reader.close()
         }
+    }
+
+    /**
+     * Lists installed packages whose ApplicationInfo is categorised as a game.
+     *
+     * PackageManager is reached through the hidden AppGlobals helper: this code
+     * runs inside app_process (no Activity/Context), and creating an
+     * ActivityThread only to obtain a Context needs a prepared Looper, which
+     * app_process does not have. AppGlobals works as root without that setup.
+     */
+    private fun resolveGamePackages(): List<String> {
+        val appGlobals = Class.forName("android.app.AppGlobals")
+        val pm = appGlobals.getDeclaredMethod("getPackageManager").invoke(null)
+            ?: throw IllegalStateException("package manager unavailable")
+
+        val getInstalledApplications = pm.javaClass.methods.firstOrNull {
+            it.name == "getInstalledApplications" &&
+                it.parameterTypes.size == 2 &&
+                it.parameterTypes[1] == Integer.TYPE
+        } ?: throw NoSuchMethodException("IPackageManager.getInstalledApplications")
+
+        // The AIDL flag parameter is `long` on current releases; older ones used
+        // `int`. Match whichever signature this device actually exposes.
+        val flags: Any = if (getInstalledApplications.parameterTypes[0] == java.lang.Long.TYPE) {
+            PackageManager.GET_META_DATA.toLong()
+        } else {
+            PackageManager.GET_META_DATA
+        }
+        val slice = getInstalledApplications.invoke(pm, flags, 0)
+        val applications = slice.javaClass.getMethod("getList").invoke(slice) as? List<*>
+            ?: emptyList<Any>()
+
+        return applications.asSequence()
+            .filterIsInstance<ApplicationInfo>()
+            .filter { it.category == ApplicationInfo.CATEGORY_GAME }
+            .map { it.packageName }
+            .distinct()
+            .sorted()
+            .toList()
     }
 
     /**

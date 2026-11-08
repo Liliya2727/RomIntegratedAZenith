@@ -137,21 +137,29 @@ There is no property for this; it is a file and a marker, both inside `GAMELIST_
 
 | Path | Written by | Meaning |
 | --- | --- | --- |
-| `gamelist/gamelistloaded` | the daemon | The device has been scanned; no further first-boot scan will run. |
+| `gamelist/gamelistloaded` | the daemon | The installed games have been scanned; no further first-boot scan will run. |
 | `gamelist/gamelist.txt` | the daemon (first boot), or you | One package name per line. |
 
-On boot `initialize` checks for the marker. If it is missing, the daemon asks the
-package manager (`IPackageManager.getAllPackages`) for every installed
-package, writes the result to `gamelist.txt`, and only then writes the marker —
-so a scan that failed (package manager not up yet, transaction refused) is retried
-on the next boot instead of being lost. If the marker already exists, the daemon
-only reads `gamelist.txt`; nothing is ever overwritten.
+On boot `main()` checks for the marker. If it is missing, the daemon asks the
+package manager (through the embedded resolver APK) which installed
+applications are categorised as games (`ApplicationInfo.category ==
+CATEGORY_GAME`), writes **only those packages** to `gamelist.txt`, and only then
+writes the marker — so a scan that failed (package manager not up yet, transaction
+refused, old resolver APK) is retried on the next boot instead of being lost.
+
+The marker is versioned (`games-v1 <count>`). After upgrading from a build that
+stored every installed package, the old marker is detected once and the existing
+list is intersected with the installed games, so entries that were manually added
+and are still games survive. With a current marker the daemon only reads
+`gamelist.txt`; the list is not touched again until you edit it or delete the
+marker.
 
 Delete `gamelist/gamelistloaded` and reboot to rebuild the list from scratch (this
 throws away whatever you had in `gamelist.txt`). To add or remove single games,
 edit `gamelist.txt` directly — the daemon watches it and reloads on change.
 
 `zx.azenith` (and anything under it) is never added by the scan; the daemon and
-its app are filtered out by name. The list you write by hand is never filtered.
+its app are filtered out by name. Once the versioned marker exists, the list you
+write by hand is never filtered.
 
 ---
