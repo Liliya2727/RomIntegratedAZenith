@@ -264,8 +264,20 @@ pub(crate) fn watch_processes() {
             }
         }
 
-        // Do not clear the selected game based on a /proc snapshot. AMS's
-        // onProcessDied callback owns that lifecycle transition so a background
-        // game keeps its profile until its last process has exited.
+        // Safety net for a missed onProcessDied. AMS owns this transition, but
+        // a dropped oneway would pin the game's profile forever, and a
+        // background game still has live processes, so "no process left" is
+        // exactly the condition onProcessDied reports.
+        let stale = match &s.active {
+            Some((pkg, _)) if !apps.iter().any(|a| &a.pkg == pkg) => Some(pkg.clone()),
+            _ => None,
+        };
+        if let Some(pkg) = stale {
+            s.procs.retain(|_, (p, _)| p != &pkg);
+            s.active = None;
+            info!(comp::STATE, "active game destroyed: {pkg} (no process left, process poller)");
+            apply(s, "process poller");
+            continue;
+        }
     });
 }

@@ -18,7 +18,7 @@
 // Use the constants in [`comp`] rather than a literal, so a message can never
 // drift into an ad-hoc tag.
 
-use std::sync::atomic::{AtomicU8, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 
 use crate::common::android_ffi;
 
@@ -34,6 +34,10 @@ const DEBUGMODE_PROP: &str = "persist.sys.azenithIntg.debugmode";
 pub(crate) enum Lv { Debug = 0, Info = 1, Warn = 2, Error = 3 }
 
 static LEVEL: AtomicU8 = AtomicU8::new(Lv::Info as u8);
+
+/// Resolved once in [`log_init`]. `log_write` runs on binder threads, and
+/// re-reading the property there meant one `getprop` fork per DEBUG line.
+static DEBUG: AtomicBool = AtomicBool::new(false);
 
 pub(crate) fn level_name() -> &'static str {
     ["debug", "info", "warn", "error"][LEVEL.load(Ordering::Relaxed) as usize]
@@ -116,14 +120,17 @@ fn logcat(lv: Lv, component: &str, message: &str) {
 }
 
 pub(crate) fn log_init() {
-    let lv = match std::env::var("LIBBINDING_LOG").ok().as_deref() {
-        Some("debug") => Lv::Debug,
-        Some("info") => Lv::Info,
-        Some("warn") => Lv::Warn,
-        Some("error") => Lv::Error,
-        _ if debugmode() => Lv::Debug,
-        _ => Lv::Info,
+    let (lv, dbg) = match std::env::var("LIBBINDING_LOG").ok().as_deref() {
+        Some("debug") => (Lv::Debug, true),
+        Some("info") => (Lv::Info, debugmode()),
+        Some("warn") => (Lv::Warn, false),
+        Some("error") => (Lv::Error, false),
+        _ => {
+            let d = debugmode();
+            (if d { Lv::Debug } else { Lv::Info }, d)
+        }
     };
+    DEBUG.store(dbg, Ordering::Relaxed);
     LEVEL.store(lv as u8, Ordering::Relaxed);
 }
 
@@ -141,7 +148,7 @@ pub(crate) fn log_write(lv: Lv, component: &str, msg: &str) {
     if (lv as u8) < LEVEL.load(Ordering::Relaxed) { return; }
     // DEBUG detail is opt-in, so a command that is invoked (or not) does not
     // have to check the property itself.
-    if matches!(lv, Lv::Debug) && !debugmode() { return; }
+    if matches!(lv, Lv::Debug) && !DEBUG.load(Ordering::Relaxed) { return; }
 
     let component = if component.is_empty() { comp::DAEMON } else { component };
     logcat(lv, component, msg);
