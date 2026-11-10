@@ -33,6 +33,10 @@ fn subcommand(name: &str) -> Option<&'static str> {
     })
 }
 
+/// NDK binder threadpool ceiling. AOSP's DEFAULT_MAX_BINDER_THREADS, the same
+/// value rsbinder uses for its own pool.
+const BINDER_THREADS: u32 = 15;
+
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
 
@@ -88,6 +92,15 @@ fn main() {
     watch_list();  // auto reload when the file changes
 
     let n = n();
+
+    // Threadpool must be running before any binder call: AOSP refuses to cache
+    // the service binder and BpBinder::linkToDeath gives up when no thread is
+    // listening yet, so a late startThreadPool strands every inbound callback.
+    unsafe {
+        (n.ABinderProcess_setThreadPoolMaxThreadCount)(BINDER_THREADS);
+        (n.ABinderProcess_startThreadPool)();
+    }
+
     let am = service(c"activity", c"android.app.IActivityManager");
     if am.is_null() { std::process::exit(1); }
 
@@ -104,6 +117,20 @@ fn main() {
 
     start_observer();
 
+    // Build gamelist.txt on first boot. Runs in the main process where binder,
+    // NDK and transaction codes are already set up (see above), so the installed
+    // package scan can actually reach the package manager.
+    init_gamelist();
+
+    // Boot phase (profile mode 0) first: it seeds the default governor/IO/Mali
+    // properties that every profile below resolves its fallback chain from, so a
+    // profile applied before it would read empty props and fall back to hardcoded
+    // defaults. Both this and the profiler worker must be up before the observer
+    // is registered: from that point a foreground callback can reach
+    // queue_profile — see daemon::profiler::run_initialize.
+    daemon::profiler::run_initialize();
+    daemon::profiler::init(); // worker thread that applies profiles in-process
+
     let obs = unsafe { (n.AIBinder_new)(class(c"android.app.IProcessObserver", on_observer), null_mut()) };
     if obs.is_null() { error!(comp::DAEMON, "failed to create observer binder"); std::process::exit(1); }
 
@@ -116,21 +143,7 @@ fn main() {
     unsafe { (n.AParcel_delete)(reply); }
     info!(comp::DAEMON, "IProcessObserver registered with ActivityManager");
 
-    // Build gamelist.txt on first boot. Runs in the main process where binder,
-    // NDK and transaction codes are already set up (see above), so the installed
-    // package scan can actually reach the package manager.
-    init_gamelist();
-
-    // Boot phase (profile mode 0) first: it seeds the default governor/IO/Mali
-    // properties that every profile below resolves its fallback chain from, so a
-    // profile applied before it would read empty props and fall back to hardcoded
-    // defaults. Before `startThreadPool` because no inbound binder transaction is
-    // dispatched until then — see daemon::profiler::run_initialize.
-    daemon::profiler::run_initialize();
-
-    unsafe { (n.ABinderProcess_startThreadPool)(); }
     daemon::api::start_binder_server(); // hosted AIDL service via rsbinder
-    daemon::profiler::init(); // worker thread that applies profiles in-process
     init_status(); // register binder callbacks (screen/saver/zen) + read initial status
     seed(); // process table + initial state (profile 1/2/3, or 2/NULL if no game is on screen)
     watch_processes(); // periodic process verification to prevent any missed events

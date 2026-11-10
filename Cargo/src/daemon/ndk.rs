@@ -70,6 +70,7 @@ ndk! {
     AStatus_getDescription(P) -> *const c_char;
     AStatus_deleteDescription(*const c_char);
     AStatus_delete(P);
+    ABinderProcess_setThreadPoolMaxThreadCount(u32) -> bool;
     ABinderProcess_startThreadPool();
     ABinderProcess_joinThreadPool();
 }
