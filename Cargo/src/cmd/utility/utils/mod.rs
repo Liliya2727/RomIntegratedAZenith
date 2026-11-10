@@ -125,7 +125,9 @@ pub(crate) fn restartservice() {
     let _ = shell::system(comp::UTILITY_SHELL, "pkill -9 -f sys.azenith-service");
     let _ = shell::system(comp::UTILITY_SHELL, "pkill -9 -f sys.azenith-appmonitoring");
 
-    prop::setprop("persist.sys.azenithIntg.state", "stopped");
+    // init.azenith.rc triggers on `state=1`; any other value keeps the service
+    // down. "stopped" would also never match a later start, so use "0".
+    prop::setprop("persist.sys.azenithIntg.state", "0");
 
     if shell::system(comp::UTILITY_SHELL, "sh /data/adb/modules/AZenith/service.sh &") != 0 {
         log_error(comp::DAEMON, "service restart failed");
