@@ -244,10 +244,14 @@ pub(crate) fn watch_processes() {
         // AMS is the authority for the foreground app. oom_score_adj is only a
         // hint here: on some ROMs a background app can sit at 0 while a game is
         // at 100/200, so never let this poller replace a live AMS focus.
-        let focused_alive = s.focused.as_ref()
-            .map(|(_, pid, _)| apps.iter().any(|a| a.pid == *pid))
+        // Liveness is not evidence of focus, though: a backgrounded app keeps
+        // its process, so a stale focus would pin this poller out of recovery
+        // forever and the foreground app would never be detected at all.
+        // adj==0 is what "top app" means, so drop a focus that left the top slot.
+        let focused_top = s.focused.as_ref()
+            .map(|(_, pid, _)| apps.iter().any(|a| a.pid == *pid && a.adj == 0))
             .unwrap_or(false);
-        if !focused_alive {
+        if !focused_top {
             s.focused = None;
         }
 
