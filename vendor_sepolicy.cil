@@ -28,6 +28,7 @@
 (allow azenith_service vendor_file (file (execute_no_trans)))
 (allow azenith_service servicemanager (binder (call transfer)))
 (allow azenith_service system_server (binder (call transfer)))
+(allow system_server azenith_service (binder (call transfer)))
 (allow azenith_service system_server (fd (use)))
 (allow azenith_service system_server (fifo_file (write)))
 (allow azenith_service window_service (service_manager (find)))

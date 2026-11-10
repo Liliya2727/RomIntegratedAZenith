@@ -53,6 +53,7 @@
 ;; Allow communication with system_server and servicemanager
 (allow azenith_service servicemanager (binder (call transfer)))
 (allow azenith_service system_server (binder (call transfer)))
+(allow system_server azenith_service (binder (call transfer)))
 (allow azenith_service system_server (fd (use)))
 (allow azenith_service system_server (fifo_file (write)))
 

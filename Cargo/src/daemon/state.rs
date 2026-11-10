@@ -15,7 +15,7 @@ use crate::common::paths::STATE_FILE;
 
 pub(crate) struct St {
     pub(crate) list: BTreeSet<String>,                  // packages in the gamelist
-    pub(crate) active: Option<(String, BTreeSet<i32>)>, // selected game, retained until its last process dies
+    pub(crate) active: Option<(String, BTreeSet<i32>)>, // selected game; cleared when it leaves the foreground
     pub(crate) focused: Option<(String, i32, i32)>,     // (package, pid, uid) of foreground app
     pub(crate) procs: BTreeMap<i32, (String, i32)>,     // pid -> (package, uid) of all known app processes
     last: String,                                       // last active app recorded in state.toml
@@ -185,11 +185,12 @@ pub(crate) fn set_focused(pkg: &str, pid: i32, uid: i32, why: &str) {
             s.active = Some((pkg, pids));
             apply(s, why);
         }
-    } else if let Some((active_pkg, _)) = &s.active {
-        // Foreground is a detection signal, not the lifetime of a selected
-        // game. Keep performance and the tracked package while it is
-        // backgrounded; onProcessDied clears it after its last process exits.
-        debug!(comp::STATE, "non-game foreground [{pkg}] while game [{active_pkg}] remains pinned until process death");
+    } else if let Some((active_pkg, _)) = s.active.take() {
+        // The profile follows the foreground app. A game that leaves the top
+        // slot keeps its process, so waiting for its last process to die would
+        // pin performance forever after the user exits the game.
+        info!(comp::STATE, "game left the foreground: {active_pkg} (now {pkg})");
+        apply(s, why);
     }
 }
 
@@ -235,7 +236,7 @@ pub(crate) fn adopt(why: &str) {
 
 pub(crate) fn watch_processes() {
     thread::spawn(|| loop {
-        thread::sleep(Duration::from_millis(1500));
+        thread::sleep(Duration::from_millis(500));
         let apps = scan_apps();
 
         let mut g = st();
@@ -255,10 +256,12 @@ pub(crate) fn watch_processes() {
             s.focused = None;
         }
 
-        // Recover only when AMS has not told us anything yet (startup or the
-        // focused process died) and exactly one app claims the top slot. With
-        // several adj==0 processes the result is ambiguous; leave it to AMS.
-        if s.focused.is_none() && s.active.is_none() {
+        // Recover the foreground app whenever AMS has not told us who it is.
+        // This runs both at startup and whenever the focused app left the top
+        // slot, so a game the user just exited is replaced by the launcher and
+        // set_focused drops the profile. Require exactly one app in the top
+        // slot: with several adj==0 processes the result is ambiguous.
+        if s.focused.is_none() {
             let mut top = apps.iter().filter(|a| a.adj == 0);
             if let (Some(a), None) = (top.next(), top.next()) {
                 let (pkg, pid, uid) = (a.pkg.clone(), a.pid, a.uid);
