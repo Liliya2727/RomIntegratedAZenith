@@ -119,7 +119,9 @@ fn run_profile(mode: u8) {
         info!(comp::PROFILER, "disabletweak=1, skipping profile apply mode={}", mode_name(mode));
         return;
     }
+    let t = Instant::now();
     crate::cmd::settings::apply_mode(mode);
+    info!(comp::PROFILER, "profile apply finished mode={} in {:.0?}", mode_name(mode), t.elapsed());
 }
 
 // Boot phase: mode 0 — the governor/IO/Mali init, thermal, networking,

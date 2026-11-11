@@ -15,7 +15,7 @@ use crate::common::paths::STATE_FILE;
 
 pub(crate) struct St {
     pub(crate) list: BTreeSet<String>,                  // packages in the gamelist
-    pub(crate) active: Option<(String, BTreeSet<i32>)>, // selected game; cleared when it leaves the foreground
+    pub(crate) active: Option<(String, BTreeSet<i32>)>, // selected game, held until its last process exits
     pub(crate) focused: Option<(String, i32, i32)>,     // (package, pid, uid) of foreground app
     pub(crate) procs: BTreeMap<i32, (String, i32)>,     // pid -> (package, uid) of all known app processes
     last: String,                                       // last active app recorded in state.toml
@@ -185,12 +185,13 @@ pub(crate) fn set_focused(pkg: &str, pid: i32, uid: i32, why: &str) {
             s.active = Some((pkg, pids));
             apply(s, why);
         }
-    } else if let Some((active_pkg, _)) = s.active.take() {
-        // The profile follows the foreground app. A game that leaves the top
-        // slot keeps its process, so waiting for its last process to die would
-        // pin performance forever after the user exits the game.
-        info!(comp::STATE, "game left the foreground: {active_pkg} (now {pkg})");
-        apply(s, why);
+    } else if let Some((active_pkg, _)) = &s.active {
+        // Foreground is a detection signal, not the lifetime of a selected
+        // game: a backgrounded game keeps its process, so releasing here would
+        // flip the profile every time the user leaves and re-enters the app.
+        // The process poller releases it once its last process is gone, which
+        // is exactly what clearing the app from recents does.
+        info!(comp::STATE, "non-game foreground [{pkg}], keeping game [{active_pkg}] until its last process exits");
     }
 }
 
@@ -257,10 +258,10 @@ pub(crate) fn watch_processes() {
         }
 
         // Recover the foreground app whenever AMS has not told us who it is.
-        // This runs both at startup and whenever the focused app left the top
-        // slot, so a game the user just exited is replaced by the launcher and
-        // set_focused drops the profile. Require exactly one app in the top
-        // slot: with several adj==0 processes the result is ambiguous.
+        // This runs at startup and whenever the focused app left the top slot,
+        // so the daemon keeps tracking the foreground app while a game stays
+        // pinned in the background. Require exactly one app in the top slot:
+        // with several adj==0 processes the result is ambiguous.
         if s.focused.is_none() {
             let mut top = apps.iter().filter(|a| a.adj == 0);
             if let (Some(a), None) = (top.next(), top.next()) {

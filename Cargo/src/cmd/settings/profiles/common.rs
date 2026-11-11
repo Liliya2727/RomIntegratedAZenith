@@ -81,7 +81,12 @@ pub fn apply_common_tweaks(tweaks: &CommonTweaks) {
     // VM
     write_lock(tweaks.vfs_cache_pressure, "/proc/sys/vm/vfs_cache_pressure");
     if let Some(drop_caches) = tweaks.drop_caches {
-        write_lock(drop_caches, "/proc/sys/vm/drop_caches");
+        // Dropping a warm multi-gigabyte cache is a synchronous kernel walk
+        // that stalls the whole profile apply for seconds. Nothing downstream
+        // depends on it, so it must not sit between the decision and the
+        // governor write — that asymmetry is what made performance look slow
+        // next to an instant balanced switch.
+        std::thread::spawn(move || write_lock(drop_caches, "/proc/sys/vm/drop_caches"));
     }
 
     // Workqueue & EAS
